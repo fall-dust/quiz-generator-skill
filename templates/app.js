@@ -268,6 +268,18 @@
     return [];
   }
 
+  // ── 获取指定章节的题目（跨章节导航用）──
+  function getQsForChapter(ch) {
+    if (S.mode === 'mcq') {
+      return getAll().filter(function (q) { return q.chapter === ch; });
+    }
+    if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') {
+      var type = _typeMap[S.mode];
+      return getBQByType(type).filter(function (q) { return q.chapter === ch; });
+    }
+    return [];
+  }
+
   function current() { var qs = getQs(); return qs[S.idx] || null; }
   function total() { return getQs().length; }
 
@@ -964,6 +976,18 @@
 
   App.next = function () {
     var n = total(); if (!n) return;
+    // 按章节模式：最后一题跳到下一章第一题
+    if (S.chapter && S.chapter !== 'all' && S.chapter !== '_all' && isTypeMode(S.mode) && S.idx >= n - 1) {
+      var chs = CHAPTERS, curIdx = chs.indexOf(S.chapter);
+      if (curIdx >= 0) {
+        for (var ci = curIdx + 1; ci < chs.length; ci++) {
+          var nextQs = getQsForChapter(chs[ci]);
+          if (nextQs.length > 0) { S.chapter = chs[ci]; S.idx = 0;
+            if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') S.bqRevealed = false;
+            updateProgress(); render(); return; }
+        }
+      }
+    }
     if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') { S.idx = (S.idx + 1) % n; S.bqRevealed = false; }
     else S.idx = (S.idx + 1) % n;
     updateProgress();
@@ -972,6 +996,18 @@
 
   App.prev = function () {
     var n = total(); if (!n) return;
+    // 按章节模式：第一题跳到上一章最后一题
+    if (S.chapter && S.chapter !== 'all' && S.chapter !== '_all' && isTypeMode(S.mode) && S.idx <= 0) {
+      var chs = CHAPTERS, curIdx = chs.indexOf(S.chapter);
+      if (curIdx >= 0) {
+        for (var ci = curIdx - 1; ci >= 0; ci--) {
+          var prevQs = getQsForChapter(chs[ci]);
+          if (prevQs.length > 0) { S.chapter = chs[ci]; S.idx = prevQs.length - 1;
+            if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') S.bqRevealed = false;
+            updateProgress(); render(); return; }
+        }
+      }
+    }
     if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') { S.idx = (S.idx - 1 + n) % n; S.bqRevealed = false; }
     else S.idx = (S.idx - 1 + n) % n;
     updateProgress();
