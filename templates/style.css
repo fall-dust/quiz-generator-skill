@@ -275,6 +275,11 @@ body{font-family:var(--ff);background:var(--bg);color:var(--t);min-height:100vh;
 .bm-btn:hover{transform:scale(1.2)}
 .q-txt{font-size:1.05rem;line-height:1.7;color:var(--t);font-weight:500;margin-bottom:16px}
 
+/* ==================== 题目配图 ==================== */
+.q-img-wrap{text-align:center;margin:12px 0 16px}
+.q-img{max-width:100%;height:auto;border-radius:var(--r);border:1px solid var(--bd);box-shadow:var(--shd);display:inline-block}
+.q-img-wrap + .opts{margin-top:4px}
+
 /* ==================== 选项 ==================== */
 .opts{display:flex;flex-direction:column;gap:8px}
 .opt{

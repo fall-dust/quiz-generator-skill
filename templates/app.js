@@ -506,6 +506,9 @@
     html += '</button></div>';
 
     html += '<div class="q-txt">' + escapeHtml(q.question) + '</div>';
+    if (q.image) {
+      html += '<div class="q-img-wrap"><img class="q-img" src="' + escapeHtml(q.image) + '" alt="题目附图" loading="lazy" onerror="this.style.display='none'"></div>';
+    }
     html += '<div class="opts">';
     q.options.forEach(function (opt) {
       var cls = 'opt';
@@ -574,6 +577,9 @@
     html += '<div class="bq-card">';
     html += '<div class="bq-front"><div class="bq-label">📖 题目</div>';
     html += '<div class="bq-q">' + escapeHtml(q.question) + '</div>';
+    if (q.image) {
+      html += '<div class="q-img-wrap"><img class="q-img" src="' + escapeHtml(q.image) + '" alt="题目附图" loading="lazy" onerror="this.style.display='none'"></div>';
+    }
     if (!S.bqRevealed) {
       html += '<div style="margin-top:24px;text-align:center"><button class="btn btn-p" onclick="App.revealBQ()">显示答案</button></div>';
     }
