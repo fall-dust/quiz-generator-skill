@@ -892,7 +892,7 @@
 
     var content = '';
     if (S.mode === 'dashboard') content = renderDashboard();
-    else if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') content = renderBQView();
+    else if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') content = S.chapter === 'all' ? renderBQChapterGrid() : renderBQChapterList();
     else if (S.mode === 'bookmark') content = S.chapter === 'all' ? renderBookmarkOverview() : renderQuestionView();
     else if (S.mode === 'wrong') content = S.chapter === 'all' ? renderWrongOverview() : renderQuestionView();
     else if (S.mode === 'mcq' || S.mode === 'random') content = renderQuestionView();
@@ -900,7 +900,9 @@
     document.getElementById('contentArea').innerHTML = content;
 
     document.getElementById('contentFooter').innerHTML =
-      '<span>第 ' + (S.idx + 1) + '/' + Math.max(total(), 1) + ' 题</span><span>' + modeName + '</span>';
+      (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') && S.chapter !== 'all'
+        ? '<span>共 ' + Math.max(total(), 1) + ' 题</span><span>' + modeName + '</span>'
+        : '<span>第 ' + (S.idx + 1) + '/' + Math.max(total(), 1) + ' 题</span><span>' + modeName + '</span>';
 
     document.getElementById('modalContainer').innerHTML = renderModals();
     renderSheet();
@@ -958,7 +960,7 @@
     _retryActive = false;
     _rdAns = {}; _rdRes = {};
     S._bmQs = null;
-    S.mode = mode; S.chapter = 'all'; S.idx = getProgress(); S.showSheet = false; S.bqRevealed = false; S.bqFilter = false; S._bqFilteredQs = null; render();
+    S.mode = mode; S.chapter = 'all'; S.idx = 0; S.showSheet = false; S.bqFilter = false; S._bqFilteredQs = null; render();
   };
 
   App.goChapter = function (ch) {
@@ -968,10 +970,9 @@
     navPush();
     if (!isTypeMode(S.mode)) S.mode = 'mcq';
     S.chapter = ch;
-    // 实时扫描第一个未做题，不依赖缓存
     var qs = getQs(); S.idx = 0;
     if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') {
-      for (var i = 0; i < qs.length; i++) { var p = S.bqProg[qs[i].id] || {}; if (!p.memorized) { S.idx = i; break; } }
+      // 列表模式，显示所有题，无需定位
     } else {
       for (var i = 0; i < qs.length; i++) { if (!S.answers[qs[i].id]) { S.idx = i; break; } }
     }
@@ -1002,7 +1003,7 @@
         }
       }
     }
-    if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') { S.idx = (S.idx + 1) % n; S.bqRevealed = false; }
+    if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') { /* 列表模式无需翻题 */ }
     else S.idx = (S.idx + 1) % n;
     updateProgress();
     render();
@@ -1022,7 +1023,7 @@
         }
       }
     }
-    if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') { S.idx = (S.idx - 1 + n) % n; S.bqRevealed = false; }
+    if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') { /* 列表模式无需翻题 */ }
     else S.idx = (S.idx - 1 + n) % n;
     updateProgress();
     render();
@@ -1191,16 +1192,14 @@
   };
 
   App.revealBQ = function () {
-    S.bqRevealed = true;
-    var q = current();
-    if (q) { S.bqProg[q.id] = S.bqProg[q.id] || {}; S.bqProg[q.id].viewed = true; save(); }
-    render();
+    // 列表模式答案始终可见，此函数改为切换筛选
+    App.toggleBQFilter();
   };
 
-  App.markBQ = function () {
-    var q = current(); if (!q) return;
-    S.bqProg[q.id] = S.bqProg[q.id] || {};
-    S.bqProg[q.id].memorized = !S.bqProg[q.id].memorized; S.bqProg[q.id].viewed = true;
+  App.markBQ = function (qId) {
+    if (!qId) return;
+    S.bqProg[qId] = S.bqProg[qId] || {};
+    S.bqProg[qId].memorized = !S.bqProg[qId].memorized; S.bqProg[qId].viewed = true;
     save(); render();
   };
 
@@ -1212,8 +1211,8 @@
       if (S.chapter && S.chapter !== 'all') all = all.filter(function (q) { return q.chapter === S.chapter; });
       var filtered = all.filter(function (q) { var p = S.bqProg[q.id] || {}; return !p.memorized; });
       if (!filtered.length) { toast('全部已记住！', 'success'); S.bqFilter = false; render(); return; }
-      S._bqFilteredQs = filtered; S.idx = 0;
-    } else { S._bqFilteredQs = null; S.idx = 0; }
+      S._bqFilteredQs = filtered;
+    } else { S._bqFilteredQs = null; }
     render();
   };
 
