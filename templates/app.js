@@ -169,6 +169,7 @@
   function syncRetryToPerm() {
     Object.keys(_wrAns).forEach(function (id) {
       if (_wrRes[id] !== undefined) { S.answers[id] = _wrAns[id]; S.results[id] = _wrRes[id]; }
+      if (_wrRes[id] === true) S.wrongSet.delete(id); else if (_wrRes[id] === false) S.wrongSet.add(id);
     });
     Object.keys(_bmAns).forEach(function (id) {
       if (_bmRes[id] !== undefined) { S.answers[id] = _bmAns[id]; S.results[id] = _bmRes[id]; }
@@ -661,65 +662,78 @@
   }
 
   // ── 错题本概览（按章节+类型分组）──
+  // ── 错题/收藏概览（网格卡片布局） ──
   function renderWrongOverview() {
     var ids = Array.from(rSet());
     if (!ids.length) {
       var msg = S.mode === 'wrong' ? '暂无错题 🎉' : '暂无收藏 ⭐';
       return '<div class="empty"><p>' + msg + '</p><button class="btn btn-p" onclick="App.home()" style="margin-top:12px">返回首页</button></div>';
     }
-    // 按章节+类型分组
-    var byChapterType = {};
+
+    // 过滤：只统计题库中实际存在的题目ID，避免脏数据导致总数与明细不一致
+    ids = ids.filter(function (id) {
+      return (QUESTIONS || []).some(function (q) { return q.id === id; });
+    });
+    if (!ids.length) {
+      var msg = S.mode === 'wrong' ? '暂无错题 🎉' : '暂无收藏 ⭐';
+      return '<div class="empty"><p>' + msg + '</p><button class="btn btn-p" onclick="App.home()" style="margin-top:12px">返回首页</button></div>';
+    }
+
+    // 按章节分组
+    var byChapter = {};
     ids.forEach(function (id) {
       var q = (QUESTIONS || []).find(function (x) { return x.id === id; });
       if (!q) return;
-      if (!byChapterType[q.chapter]) byChapterType[q.chapter] = { single: [], multiple: [] };
-      var t = q.type === 'single' ? 'single' : 'multiple';
-      byChapterType[q.chapter][t].push(q);
+      if (!byChapter[q.chapter]) byChapter[q.chapter] = [];
+      byChapter[q.chapter].push(q);
     });
-    var chKeys = Object.keys(byChapterType).sort();
-    var isBm = S.mode === 'bookmark';
-    var bg = isBm ? 'linear-gradient(135deg,#f39c12,#e67e22)' : 'linear-gradient(135deg,var(--rd),#c0392b)';
-    var icon = isBm ? '⭐' : '❌';
-    var title = isBm ? '收藏题目' : '错题本';
-    var suffix = isBm ? '道收藏' : '道错题';
+    var chapterKeys = Object.keys(byChapter).sort();
+    var isBookmark = S.mode === 'bookmark';
+    var bg = isBookmark ? 'linear-gradient(135deg,#f39c12,#e67e22)' : 'linear-gradient(135deg,var(--rd),#c0392b)';
+    var icon = isBookmark ? '⭐' : '❌';
+    var title = isBookmark ? '收藏题目' : '错题本';
+    var suffix = isBookmark ? '道收藏' : '道错题';
+
     var html = '<div class="dash">';
     html += '<div class="dash-hero" style="background:' + bg + '">';
-    html += '<div class="dash-hero-icon">' + icon + '</div><h2>' + title + '</h2><p>共 <strong>' + ids.length + '</strong> ' + suffix + '</p></div>';
+    html += '<div class="dash-hero-icon">' + icon + '</div><h2>' + title + '</h2>';
+    html += '<p>共 <strong>' + ids.length + '</strong> ' + suffix + '</p>';
+    html += '</div>';
 
-    chKeys.forEach(function (ch) {
-      var chData = byChapterType[ch];
-      var singleQs = chData.single || [], multiQs = chData.multiple || [];
-      var chTotal = singleQs.length + multiQs.length;
-      html += '<h3 class="sec-title" style="margin-top:16px">' + chName(ch) + ' <span style="font-weight:normal;color:var(--t2);font-size:0.85rem">（' + chTotal + ' ' + suffix + '）</span></h3>';
-
-      // 按类型分组显示
-      var typeGroups = [
-        { label: '📋 单选题', qs: singleQs, tag: '单选' },
-        { label: '📋 多选题', qs: multiQs, tag: '多选' }
-      ];
-      typeGroups.forEach(function (group) {
-        if (!group.qs.length) return;
-        html += '<div style="margin:4px 0 2px 8px;font-size:0.8rem;color:var(--t2);font-weight:600">' + group.label + '（' + group.qs.length + '）</div>';
-        html += '<div class="wrong-q-list">';
-        group.qs.forEach(function (q) {
-          var allInCh = getAll().filter(function (x) { return x.chapter === ch; });
-          var qIdx = allInCh.indexOf(q);
-          var qNum = qIdx >= 0 ? (qIdx + 1) : '?';
-          var qShort = q.question.length > 50 ? q.question.substring(0, 50) + '…' : q.question;
-          html += '<div class="wrong-q-item" onclick="App.goRetryChapterAndIdx(\'' + ch + '\',\'' + q.id + '\')">';
-          html += '<span class="wrong-q-tag">' + group.tag + '</span>';
-          html += '<span class="wrong-q-ch">' + chName(ch) + '</span>';
-          html += '<span class="wrong-q-num">第' + qNum + '题</span>';
-          html += '<span class="wrong-q-txt">' + escapeHtml(qShort) + '</span>';
-          html += '</div>';
-        });
-        html += '</div>';
+    // 网格卡片：每个章节一张卡片
+    html += '<div class="wrong-chapter-grid">';
+    chapterKeys.forEach(function (ch) {
+      var qs = byChapter[ch];
+      // 统计各题型错误数量
+      var singleCount = 0, multiCount = 0;
+      qs.forEach(function (q) {
+        if (q.type === 'single') singleCount++;
+        else multiCount++;
       });
-    });
+      // 计算本章总题数和已完成数
+      var allInCh = getAll().filter(function (x) { return x.chapter === ch; });
+      var totalInCh = allInCh.length;
+      // 统计已作答的错题数（有结果记录就算已作答）
+      var answeredWrong = qs.filter(function (q) { return S.results[q.id] !== undefined; }).length;
 
-    html += '<div style="text-align:center;margin-top:20px">';
+      html += '<div class="wrong-chapter-card" onclick="App.goRetryChapter('' + ch + '')">';
+      html += '<div class="ch-name">' + chName(ch) + '</div>';
+      html += '<div class="ch-stat"><span class="ch-count">' + qs.length + '</span><span class="ch-count-label">' + (isBookmark ? '道收藏' : '道错题') + '</span></div>';
+      html += '<div class="ch-sub">本章共 ' + totalInCh + ' 题 · 已答 ' + answeredWrong + '/' + qs.length + ' 道错题</div>';
+      html += '<div class="ch-divider"></div>';
+      html += '<div class="ch-type-tags">';
+      if (singleCount > 0) html += '<span class="ch-type-tag danger">单选 ' + singleCount + '</span>';
+      if (multiCount > 0) html += '<span class="ch-type-tag warning">多选 ' + multiCount + '</span>';
+      html += '</div>';
+      html += '<div class="ch-enter">查看此章错题 →</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+
+    html += '<div style="text-align:center;margin-top:4px">';
     html += '<button class="btn btn-p" onclick="App.openWrongDlg()" style="font-size:1rem;padding:12px 32px">🎯 开始自测</button>';
     html += '</div>';
+
     html += '</div>';
     return html;
   }
