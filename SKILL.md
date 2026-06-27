@@ -1,6 +1,6 @@
 ---
 name: quiz-generator
-description: "从Markdown题库文件生成功能全面的离线自测网页系统，自适应多种题型（选择/判断/填空/简答/计算），支持答题卡、错题本、随机抽题、前进后退导航等完整功能"
+description: "从Markdown题库文件生成功能全面的离线自测网页系统，自适应多种题型（选择/判断/填空/简答/计算），支持答题卡、错题本、随机抽题、前进后退导航等完整功能。背诵类题（填空/简答/计算）采用「章节网格卡片概览→章节内滚动列表」双层布局，非一题一切换的闪卡模式"
 ---
 
 # Quiz Generator — 自适应题库自测系统生成器
@@ -185,9 +185,9 @@ templates/          →    {输出目录}/
 | 题型 | 模式 | 数据源 | 进度追踪 | 视图 |
 |------|------|--------|---------|------|
 | ✏️ 选择题 | `mcq` | `QUESTIONS[]` | `answers{}` + `results{}` | 选项点击 |
-| 📝 填空题 | `fill` | `BIG_QUESTIONS[type='填空']` | `bqProg{}.viewed/memorized` | 闪卡 |
-| 📄 简答题 | `essay` | `BIG_QUESTIONS[type='简答']` | `bqProg{}.viewed/memorized` | 闪卡 |
-| 🔢 计算题 | `calc` | `BIG_QUESTIONS[type='计算']` | `bqProg{}.viewed/memorized` | 闪卡 |
+| 📝 填空题 | `fill` | `BIG_QUESTIONS[type='填空']` | `bqProg{}.viewed/memorized` | 列表卡片 |
+| 📄 简答题 | `essay` | `BIG_QUESTIONS[type='简答']` | `bqProg{}.viewed/memorized` | 列表卡片 |
+| 🔢 计算题 | `calc` | `BIG_QUESTIONS[type='计算']` | `bqProg{}.viewed/memorized` | 列表卡片 |
 
 每种题型：
 - 独立按章节浏览：`mode=fill + chapter=ch1` → 只看第1章填空题
@@ -197,7 +197,7 @@ templates/          →    {输出目录}/
 
 ### 导航栏按钮
 
-每题底部导航栏：
+**选择题/随机抽题**模式每题底部有导航栏：
 
 ```
 ↩️ ↪️ 🏠 ◀ 上一题 📋 答题卡 <模式标记> 下一题 ▶
@@ -210,6 +210,8 @@ templates/          →    {输出目录}/
 | `🏠` | 返回仪表盘首页 |
 | `◀`/`▶` | 上/下一题（记录进度；**跨章节**：尾题→下一章第一题，首题→上一章最后一题） |
 | `📋 答题卡` | 打开答题卡面板（选择题/随机抽题/错题本/收藏查看模式，实时显示各题状态） |
+
+**大题模式（填空/简答/计算）** 无此导航栏——因为采用**章节网格卡片概览 + 章节内滚动列表**布局，所有题目一次性展示，无需翻题按钮。每道题卡片底部仅有"标记已记住"按钮。
 
 **答题卡**显示所有题目的答题状态网格：
 - 🟢 绿色 = 回答正确
@@ -228,7 +230,7 @@ templates/          →    {输出目录}/
 | 错题重做 (`wrong`, `_retryActive=true`) | `_wrAns` / `_wrRes`（临时） |
 | 错题查看 (`wrong`, 非自测) | `rAnsObj()` / `rResObj()` → 回退 `S.answers` |
 | 收藏查看 (`bookmark`) | `rAnsObj()` / `rResObj()` → 原 `S.answers` |
-| 大题模式 (`fill`/`essay`/`calc`) | ❌ 不显示（闪卡模式无需答题卡） |
+| 大题模式 (`fill`/`essay`/`calc`) | ❌ 不显示（列表卡片模式无需答题卡） |
 
 ---
 
@@ -366,18 +368,19 @@ App.pick(label)
 - `_progress` 对象 → localStorage `net_progress`
 - 键格式：`{mode}_{chapter}`，如 `mcq_ch1`、`fill_ch2`
 
-### 更新时机
+### 更新时机（选择题模式）
 
 | 操作 | 函数 |
 |------|------|
 | 答题（单选/多选确认） | `pick()` / `confirmMC()` |
 | 翻题 | `next()` / `prev()` |
-| BQ 闪卡翻看 | `next()` / `prev()` |
+
+**大题模式（填空/简答/计算）** 无进度追踪更新——采用列表卡片一次性展示所有题目，无需记录翻题进度。"已记住"状态通过 `memorized` 字段独立记录。
 
 ### 跳转到未做题
 
 - **进入题型**（`startType()`）：使用 `getProgress()` 读取缓存进度；`chapter='all'` 时回退到任意已做题章节的进度
-- **进入章节**（`goChapter()`）：**实时扫描**当前章节题目列表，直接定位第一个未做题（选择题检查 `S.answers`，大题检查 `bqProg.memorized`），不依赖可能过期的缓存
+- **进入章节**（`goChapter()`）：选择题模式**实时扫描**当前章节题目列表，直接定位第一个未做题（检查 `S.answers`）。大题模式（列表卡片）直接展示全部题目，无跳转逻辑
 
 ---
 
@@ -396,7 +399,7 @@ App.pick(label)
 `App.forward()` 弹出 `_forwardStack`，将当前状态推回 `_navStack`。
 任何新的导航操作（非前进/后退）会清空 `_forwardStack`，确保不会出现"分支"历史。
 
-**前后导航按钮：** 在答题界面底部导航栏和 BQ 闪卡底部都提供 `↩️ 后退` 和 `↪️ 前进` 按钮。
+**前后导航按钮：** 在选择题答题界面底部导航栏提供 `↩️ 后退` 和 `↪️ 前进` 按钮。大题列表卡片模式无翻题导航，所有题目一次性渲染。
 
 ### 跨章节自动跳转
 
@@ -409,7 +412,7 @@ App.pick(label)
 | **首章第一题** | — | 停留在首章（循环） |
 | **末章最后一题** | 停留在末章（循环） | — |
 
-> 仅在 `isTypeMode()` 为真（即 mcq/fill/essay/calc 四种题型模式）且按特定章节浏览时生效。随机抽题、错题本、收藏、全部章节模式保持原有循环行为。
+> 仅对选择题（mcq 模式）生效。大题模式（列表卡片）无翻题按钮，不涉及跨章节跳转。
 
 **实现：** `App.next()` / `App.prev()` 函数在条件成立时调用 `getQsForChapter(ch)` 扫描相邻章节的题数，找到即跳转。
 
@@ -454,44 +457,99 @@ if (isEph) {
 
 ---
 
-## 填空题/大题闪卡（不需输入文字）
+## 填空题/大题列表卡片（不需输入文字）
 
-填空题、简答题、计算题使用 **闪卡模式**，不需要键盘输入，方便背诵：
+填空题、简答题、计算题不再使用"一次一题、点下一题切换"的闪卡模式，而是采用 **双层布局**，方便快速浏览和批量记忆：
+
+### 第一层：章节网格卡片概览
+
+进入题型时（`S.chapter === 'all'`）展示章节网格概览，通过 `renderBQChapterGrid()` 渲染：
 
 ```
-┌─ 📖 题目 ──────────────────────────┐
-│                                      │
-│  操作系统的4大功能是（  ）、存储器   │
-│  管理、设备管理、文件管理。           │
-│                                      │
-│          [ 显示答案 ]                │
-│                                      │
-└──────────────────────────────────────┘
+┌─ 📝 填空题 ─────────────────────────────┐
+│  共 39 题 · 已记住 12/39                 │
+└─────────────────────────────────────────┘
 
-                        ↓ 点击"显示答案"
-
-┌─ 📖 题目 ──────────────────────────┐
-│  操作系统的4大功能是（  ）、...     │
-├──────────────────────────────────────┤
-│  ✅ 参考答案                        │
-│  处理器管理                         │
-└──────────────────────────────────────┘
-      [✅ 已记住]  [仅看未记住] ☐
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│ 📖 第1章      │  │ 📖 第2章      │  │ 📖 第3章      │
+│ 12/39     ✅  │  │ 15/39        │  │ 8/39      ✅  │
+│               │  │               │  │               │
+│  总题   已记住  │  │  总题   已记住  │  │  总题   已记住  │
+│   12     10   │  │   15     8    │  │   8      6   │
+│               │  │               │  │               │
+│  记忆率 83%   │  │  记忆率 53%   │  │  记忆率 75%   │
+│ ████████░    │  │ █████░░░░░    │  │ ███████░░    │
+│ 已记住 10/12  │  │ 已记住 8/15   │  │ 已记住 6/8    │
+└──────────────┘  └──────────────┘  └──────────────┘
 ```
 
-### 操作流程
-
-| 操作 | 效果 |
+| 元素 | 说明 |
 |------|------|
-| **显示答案** | 切换 `S.bqRevealed = true`，显示参考答案；记录 `viewed=true` |
-| **标记已记住** | 切换 `memorized` 状态，永久保存到 `S.bqProg[q.id]` |
-| **仅看未记住** | 过滤出 `!memorized` 题目子集，翻看时跳过已记住的 |
-| **◀/▶ 翻题** | 自动关闭答案显示（`S.bqRevealed = false`），下一题重新隐藏 |
+| **Hero 区** | 题型图标 + 总题数 + 已记住概况 |
+| **卡片** | CSS Grid 布局（`auto-fill, minmax(240px, 1fr)`），每章一张 |
+| **章节名** | 卡片标题 |
+| **进度徽标** | `已记住/总数`；全部记住后徽标变绿色 |
+| **三列统计** | 总题 / 已记住 / 记忆率%（≥70% 绿色，<70% 黄色） |
+| **进度条** | 绿色进度条可视化记忆率 |
+| **过滤开关** | "仅看未记住"复选框，过滤出未记住的题目 |
+| **点击行为** | 点击卡片 → 进入该章的滚动列表 |
+
+### 第二层：章节内滚动列表
+
+点击某章卡片或侧边栏章节按钮后，通过 `renderBQListView()` 渲染该章全部题目：
+
+```
+┌─ ← 返回目录 · 📝 填空题 · 共 12 题  [☐ 仅看未记住] ─┐
+└────────────────────────────────────────────────────────┘
+
+┌─── [第1章] [填空] ☆  ✅ 已记住 ───────────────────┐
+│  操作系统的4大功能是（  ）、存储器管理、设备       │
+│  管理、文件管理。                                  │
+│                                                    │
+│  ┌─ ✅ 参考答案 ──────────────────────────┐       │
+│  │  处理器管理                              │       │
+│  └─────────────────────────────────────────┘       │
+│                                        [✅ 已记住]  │
+└────────────────────────────────────────────────────┘
+
+┌─── [第1章] [填空] ☆ ───────────────────────────┐
+│  进程的三种基本状态是（  ）、就绪和阻塞。          │
+│                                                    │
+│              [显示答案]                            │
+│                                        [📌 标记已记住] │
+└────────────────────────────────────────────────────┘
+```
+
+| 元素 | 说明 |
+|------|------|
+| **顶栏** | "← 返回目录"链接（回到章节网格）+ 题型名 + 题数 + 过滤开关 |
+| **卡片** | 一题一卡，左侧蓝色边框，可自由滚动浏览 |
+| **卡片头** | 章节标签、题型标签、错题标签（如有）、收藏按钮、已记住标记 |
+| **题目正文** | 支持 `white-space:pre-wrap`，自动换行 |
+| **答案区** | 每道题**独立**控制展开/收起（点击"显示答案"按钮），互不影响 |
+| **标记按钮** | 底部"标记已记住" / "✅ 已记住"，每题独立切换 |
+| **无翻题按钮** | 所有题目一次性渲染，无需 ◀/▶ 翻题 |
 
 ### 进度追踪
 
 - 侧边栏章节角标显示：`已记住/总数`
 - 仪表盘显示：`📝 填空题 已记 12/39`
+- "已记住"状态存储在 `S.bqProg[q.id].memorized`，永久保存到 localStorage
+
+### 过滤机制
+
+"仅看未记住"复选框通过 `S._bqFilteredQs` 过滤题目列表，仅展示 `!memorized` 的题目。若全部已记住，提示"全部已记住！"并自动关闭过滤。
+
+### 状态实现
+
+| 属性 | 说明 |
+|------|------|
+| `_bqRevealedMap` | 对象 `{ qId: true/false }` —— 每道题独立记录答案是否展开 |
+| `S.bqFilter` | 布尔值，控制是否启用"仅看未记住"过滤 |
+| `S._bqFilteredQs` | 过滤后的题目子集，替换 `getQs()` 返回值 |
+| `renderBQChapterGrid()` | 渲染章节网格概览 |
+| `renderBQListView()` | 渲染章节内滚动列表 |
+| `App.goBQOverview()` | 从列表回到章节网格概览 |
 
 ---
 
@@ -528,7 +586,7 @@ BIG_QUESTIONS（原始：判断/填空混合）
 
 结果：
   QUESTIONS = [choice(270) + 判断(125)]  → 单选标签显示"判断"或"选择"
-  BIG_QUESTIONS = [填空(214)]            → 闪卡模式
+  BIG_QUESTIONS = [填空(214)]            → 列表卡片模式
 ```
 
 ### bigquestions.js 占位保护
@@ -594,7 +652,7 @@ var BIG_QUESTIONS = typeof BIG_QUESTIONS !== 'undefined' ? BIG_QUESTIONS : [];
 | **进度追踪** | `_progress` + `updateProgress()/getProgress()` | IIFE 闭包 |
 | **统计函数** | `chStats/allStats/bqStats/mcqStats/bqTypeStats/currentStats` | IIFE 闭包 |
 | **数据源** | `getQs()` — 根据 mode 返回对应数据集 | IIFE 闭包 |
-| **视图渲染** | `renderDashboard/renderQuestionView/renderBQView/renderBookmarkOverview/renderWrongOverview/renderSheet/renderModals` | 返回 HTML 字符串；`renderSheet()` 按不同模式（普通/随机/错题重做/收藏）从对应数据源读取答案状态 |
+| **视图渲染** | `renderDashboard/renderQuestionView/renderBQChapterGrid/renderBQListView/renderBookmarkOverview/renderWrongOverview/renderSheet/renderModals` | 返回 HTML 字符串；`renderSheet()` 按不同模式（普通/随机/错题重做/收藏）从对应数据源读取答案状态 |
 | **主渲染** | `render()` — 组装各区域 HTML → innerHTML | IIFE 闭包 |
 | **操作接口** | `App.*` — 用户交互回调，更新状态后调用 `render()` | `window.App` |
 | **持久化** | `save/loadJ/saveProgress/syncRetryToPerm` | IIFE 闭包 |
@@ -630,7 +688,7 @@ var QUESTIONS = [
     question: '操作系统是合理组织计算机工作流程的软件集合。',
     answer: '√'
   },
-  // 填空题（归入 BIG_QUESTIONS 闪卡，也可配图）
+  // 填空题（归入 BIG_QUESTIONS 列表卡片，也可配图）
   { id: 'q1_10', chapter: 'ch1', type: '填空', number: 10,
     question: '操作系统的4大功能是（       ）、存储器管理、设备管理、文件管理。',
     image: 'images/os-functions.png',  // ← 可选配图
@@ -715,13 +773,14 @@ var CHAPTER_NAMES = {
 2. **所有 App 方法暴露到 `window.App`**：模板中通过 `onclick="App.method()"` 调用
 3. **`render()` 全量重建**：主内容区通过 `innerHTML` 全量替换
 4. **数据隔离**：`_rdAns/_rdRes`（随机临时）、`_wrAns/_wrRes`（错题重做临时）、`S.answers`（永久）三套存储互不干扰
-5. **分层回答锁定**：CSS `pointer-events:none` + JS guard `if (isAnswered(q)) return` 双层保障。多选题 `isAnswered()` 检查 `S.results`（确认后才设），而非 `S.answers`（临时选择状态），确保用户可先选多个选项再点「确认选择」提交
+5. **选择题回答锁定**：CSS `pointer-events:none` + JS guard `if (isAnswered(q)) return` 双层保障。多选题 `isAnswered()` 检查 `S.results`（确认后才设），而非 `S.answers`（临时选择状态），确保用户可先选多个选项再点「确认选择」提交
 6. **持久化**：answers/results/bookmarks/wrongSet/bqProg/progress 通过 localStorage 保存
 7. **错题/收藏查看**：`isViewingBM()/isRetry()+_retryActive` 控制临时答案回退逻辑
 8. **CSS 类名验证**：生成后检查 `style.css` 覆盖 `index.html` 中所有 `class="..."` 引用
 9. **弹窗独立容器**：弹窗通过 `#modalContainer` innerHTML 渲染
 10. **章节自动发现**：从 QUESTIONS 和 BIG_QUESTIONS 数据中自动提取章节列表
-11. **进入章节即定位未做题**：点击侧边栏章节按钮时，`goChapter()` 实时扫描该章节题目列表，直接跳转到第一个未答题（选择题查 `S.answers`，大题查 `bqProg.memorized`），而非依赖可能过期的缓存进度
+11. **大题双层布局**：填空/简答/计算题采用「章节网格卡片概览（`renderBQChapterGrid`）」→「章节内滚动列表（`renderBQListView`）」双层设计。`S.chapter === 'all'` 时展示网格概览，点击卡片或侧边栏章节进入该章列表。每道题答案独立控制展开（`_bqRevealedMap[qId]`），互不影响，不再使用全局 `S.bqRevealed` 开关
+12. **大题过滤机制**："仅看未记住"通过 `S._bqFilteredQs` 子集替换 `getQs()` 返回值实现。`App.toggleBQFilter()` 切换时实时过滤 `!memorized` 的题目
 
 ---
 
@@ -831,7 +890,7 @@ var html = window.marked.parse(markdownText);
 
 ### 使用原则
 
-1. **核心功能零依赖**：选择题答题、闪卡、进度存储等核心逻辑不依赖第三方库
+1. **核心功能零依赖**：选择题答题、大题列表卡片、进度存储等核心逻辑不依赖第三方库
 2. **按需引入**：仅在需要额外功能时（图表统计、数学公式渲染、Markdown 渲染等）引入
 3. **本地优先**：所有第三方库优先下载到 `js/lib/`，确保离线可用
 4. **CDN 回退**：本地文件缺失时自动从 CDN 加载，不阻塞页面
@@ -861,17 +920,26 @@ var html = window.marked.parse(markdownText);
 | `.q-card` | 题目卡片 | — |
 | `.fb` | 答题反馈 | `.fb-cor` `.fb-wrg` |
 | `.sh-cell` | 答题卡格子 | `.correct` `.wrong` `.skip` `.cur` |
-| `.bq-card` | 大题闪卡 | `.bq-front` `.bq-back` |
+| `.bq-list` | 大题列表容器 | 最大宽度 760px |
+| `.bq-list-bar` | 大题列表顶栏（返回+过滤） | `display:flex;justify-content:space-between` |
+| `.bq-list-card` | 大题列表单题卡片 | 左侧 `4px solid var(--p)` 边框 |
+| `.bq-list-hd` | 卡片头（标签行） | `flex-wrap:wrap` |
+| `.bq-list-q` | 题目正文 | `white-space:pre-wrap` |
+| `.bq-list-a` / `.bq-list-a-content` | 答案区 | 绿色背景 `.grb` |
+| `.bq-list-actions` | 底部"标记已记住" | `text-align:right` |
+| `.bq-back-link` | "← 返回目录"链接 | `color:var(--p)` |
+| `.wrong-ch-grid` | 错题/大题章节网格容器 | `repeat(auto-fill,minmax(240px,1fr))` |
+| `.wrong-ch-card` | 章节卡片（可点击跳转） | 红色 `border-top`；`:hover` 上移阴影 |
+| `.wrong-ch-hd` | 卡片头：章节名+徽标 | — |
+| `.wrong-ch-badge` | 错题数/进度徽标 | `.done` 绿色背景 |
+| `.wrong-ch-stats` | 三列统计数据 | `display:flex;gap:6px` |
+| `.wrong-ch-stat` / `.wrong-ch-stat-num/lbl` | 统计数字+标签 | — |
+| `.wrong-ch-bar-wrap` / `.wrong-ch-bar` | 双色/单色进度条 | `.correct` 绿色 `.wrong` 红色 |
+| `.wrong-ch-ft` | 卡片脚注 | `margin-top:auto` |
 | `.chapter-btn` | 侧边栏章节 | `.active` |
 | `.ch-badge` | 章节角标 | `.done` |
 | `.sidebar-nav.xxx-mode` | 题型色调 | `mcq-mode`/`fill-mode`/`essay-mode`/`calc-mode`/`wrong-mode` |
 | `.sidebar-context-label` | 题型目录文字标识 | — |
-| `.sheet-float-btn` | 右侧浮动答题卡 | `.hidden` |
-| `.wrong-chapter-grid` | 错题/收藏章节网格卡片容器 | `repeat(auto-fill,minmax(280px,1fr))` |
-| `.wrong-chapter-card` | 章节卡片（可点击跳转） | `:hover` 上移阴影、显示进入箭头 |
-| `.wrong-chapter-card .ch-count` | 错题数（大号红色数字） | `color: var(--rd)` |
-| `.wrong-chapter-card .ch-type-tag` | 题型分布标签（单选/多选） | `.danger` `.warning` |
-| `.wrong-chapter-card .ch-enter` | 查看指引箭头（hover 淡入） | `opacity: 0→1` |
 
 ---
 
