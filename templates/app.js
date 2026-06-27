@@ -623,6 +623,56 @@
     return html;
   }
 
+  // ── 选择题 — 章节网格概览 ──
+  function renderMCQChapterGrid() {
+    var pool = getQs();
+    if (!pool.length) return '<div class="empty"><p>暂无题目</p><button class="btn btn-p" onclick="App.home()" style="margin-top:12px">返回首页</button></div>';
+
+    var byChapter = {};
+    pool.forEach(function (q) {
+      if (!byChapter[q.chapter]) byChapter[q.chapter] = [];
+      byChapter[q.chapter].push(q);
+    });
+    var chKeys = Object.keys(byChapter).sort();
+
+    var html = '<div class="dash">';
+    html += '<div class="dash-hero" style="background:linear-gradient(135deg,var(--p),var(--p2))">';
+    html += '<div class="dash-hero-icon">\u270f\ufe0f</div><h2>选择题</h2>';
+    html += '<p>共 <strong>' + pool.length + '</strong> 道选择题</p></div>';
+
+    html += '<div class="wrong-chapter-grid">';
+    chKeys.forEach(function (ch) {
+      var qs = byChapter[ch];
+      var total = qs.length;
+      var answered = 0, correct = 0;
+      qs.forEach(function (q) {
+        if (S.answers[q.id]) { answered++; if (S.results[q.id]) correct++; }
+      });
+      var wrong = answered - correct;
+      var pct = total ? Math.round(answered / total * 100) : 0;
+
+      html += '<div class="wrong-chapter-card" onclick="App.goChapter(\'' + ch + '\')" style="border-left-color:var(--p)">';
+      html += '<div class="ch-name">' + chName(ch) + '</div>';
+      html += '<div class="ch-stat"><span class="ch-count" style="color:var(--p)">' + total + '</span><span class="ch-count-label">道题目</span></div>';
+      html += '<div class="ch-sub">已完成 ' + answered + '/' + total + ' (' + pct + '%)</div>';
+      html += '<div class="ch-divider"></div>';
+      html += '<div class="ch-type-tags">';
+      if (answered > 0) {
+        html += '<span class="ch-type-tag success">\u2714\ufe0f 正确 ' + correct + '</span>';
+        if (wrong > 0) html += '<span class="ch-type-tag danger">\u2718\ufe0f 错误 ' + wrong + '</span>';
+      } else {
+        html += '<span class="ch-type-tag">\ud83d\udcd6 未开始</span>';
+      }
+      html += '</div>';
+      html += '<div class="ch-enter" style="color:var(--p)">开始答题 →</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+
+    html += '</div>';
+    return html;
+  }
+
   // ── 收藏概览（按题型→章节） ──
   function renderBookmarkOverview() {
     var ids = Array.from(S.bookmarks);
@@ -895,7 +945,8 @@
     else if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') content = S.chapter === 'all' ? renderBQChapterGrid() : renderBQChapterList();
     else if (S.mode === 'bookmark') content = S.chapter === 'all' ? renderBookmarkOverview() : renderQuestionView();
     else if (S.mode === 'wrong') content = S.chapter === 'all' ? renderWrongOverview() : renderQuestionView();
-    else if (S.mode === 'mcq' || S.mode === 'random') content = renderQuestionView();
+    else if (S.mode === 'mcq') content = S.chapter === 'all' ? renderMCQChapterGrid() : renderQuestionView();
+    else if (S.mode === 'random') content = renderQuestionView();
     else content = '<div class="empty"><p>选择题型开始学习</p></div>';
     document.getElementById('contentArea').innerHTML = content;
 

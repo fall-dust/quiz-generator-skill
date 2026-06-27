@@ -536,7 +536,7 @@ if (isEph) {
 
 #### 第二层：章节内滚动列表
 
-点击某章卡片或侧边栏章节按钮后，通过 `renderBQListView()` 渲染该章全部题目：
+点击某章卡片或侧边栏章节按钮后，通过 `renderBQChapterList()` 渲染该章全部题目：
 
 ```
 ┌─ ← 返回目录 · 📝 填空题 · 共 12 题  [☐ 仅看未记住] ─┐
@@ -587,8 +587,9 @@ if (isEph) {
 | `_bqRevealedMap` | 对象 `{ qId: true/false }` —— 每道题独立记录答案是否展开 |
 | `S.bqFilter` | 布尔值，控制是否启用"仅看未记住"过滤 |
 | `S._bqFilteredQs` | 过滤后的题目子集，替换 `getQs()` 返回值 |
-| `renderBQChapterGrid()` | 渲染章节网格概览 |
-| `renderBQListView()` | 渲染章节内滚动列表 |
+| `renderMCQChapterGrid()` | 渲染选择题章节网格概览（已答/正确/错误统计） |
+| `renderBQChapterGrid()` | 渲染大题章节网格概览（已记住统计） |
+| `renderBQChapterList()` | 渲染大题章节内滚动列表（题目+答案全部可见） |
 | `App.goBQOverview()` | 从列表回到章节网格概览 |
 
 ---
@@ -692,7 +693,7 @@ var BIG_QUESTIONS = typeof BIG_QUESTIONS !== 'undefined' ? BIG_QUESTIONS : [];
 | **进度追踪** | `_progress` + `updateProgress()/getProgress()` | IIFE 闭包 |
 | **统计函数** | `chStats/allStats/bqStats/mcqStats/bqTypeStats/currentStats` | IIFE 闭包 |
 | **数据源** | `getQs()` — 根据 mode 返回对应数据集 | IIFE 闭包 |
-| **视图渲染** | `renderDashboard/renderQuestionView/renderMCQChapterGrid/renderBQChapterGrid/renderBQListView/renderBookmarkOverview/renderWrongOverview/renderSheet/renderModals` | 返回 HTML 字符串；`renderSheet()` 按不同模式（普通/随机/错题重做/收藏）从对应数据源读取答案状态 |
+| **视图渲染** | `renderDashboard/renderQuestionView/renderMCQChapterGrid/renderBQChapterGrid/renderBQChapterList/renderBookmarkOverview/renderWrongOverview/renderSheet/renderModals` | 返回 HTML 字符串；`renderSheet()` 按不同模式（普通/随机/错题重做/收藏）从对应数据源读取答案状态 |
 | **主渲染** | `render()` — 组装各区域 HTML → innerHTML | IIFE 闭包 |
 | **操作接口** | `App.*` — 用户交互回调，更新状态后调用 `render()` | `window.App` |
 | **持久化** | `save/loadJ/saveProgress/syncRetryToPerm` | IIFE 闭包 |
@@ -820,7 +821,7 @@ var CHAPTER_NAMES = {
 9. **弹窗独立容器**：弹窗通过 `#modalContainer` innerHTML 渲染
 10. **章节自动发现**：从 QUESTIONS 和 BIG_QUESTIONS 数据中自动提取章节列表
 11. **通用章节网格入口**：所有题型进入后先展示章节网格概览（`S.chapter === 'all'`），而非直接跳入第一题。选择题使用 `renderMCQChapterGrid()`（展示已答/正确/错误统计），大题使用 `renderBQChapterGrid()`（展示已记住/记忆率统计）
-12. **大题双层布局**：填空/简答/计算题在网格之下还有第二层——「章节内滚动列表（`renderBQListView`）」，一次性渲染全部题目，每道题答案独立控制展开（`_bqRevealedMap[qId]`）
+12. **大题双层布局**：填空/简答/计算题在网格之下还有第二层——「章节内滚动列表（`renderBQChapterList`）」，一次性渲染全部题目，答案直接可见，每道题底部有"标记已记住"按钮
 13. **大题过滤机制**："仅看未记住"通过 `S._bqFilteredQs` 子集替换 `getQs()` 返回值实现。`App.toggleBQFilter()` 切换时实时过滤 `!memorized` 的题目
 
 ---
