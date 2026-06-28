@@ -170,43 +170,22 @@ body{font-family:var(--ff);background:var(--bg);color:var(--t);min-height:100vh;
 }
 .wrong-banner strong{color:var(--rd)}
 
-/* ==================== 错题章节网格卡片 ==================== */
-.wrong-chapter-grid{
-  display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
-  gap:16px;margin-bottom:24px
+/* ==================== 错题题列表 ==================== */
+.wrong-q-list{display:flex;flex-direction:column;gap:6px;margin-bottom:16px}
+.wrong-q-item{
+  display:flex;align-items:center;gap:8px;padding:10px 14px;
+  background:var(--cd);border:1px solid var(--bd);border-radius:var(--r);
+  cursor:pointer;transition:all var(--tr);font-size:.88rem;
+  border-left:3px solid var(--rd);
 }
-.wrong-chapter-card{
-  background:var(--cd);border:1px solid var(--bd);border-radius:var(--rl);
-  padding:20px;cursor:pointer;transition:all var(--tr);box-shadow:var(--shd);
-  border-left:4px solid var(--rd);position:relative;overflow:hidden
+.wrong-q-item:hover{box-shadow:var(--shd);border-color:var(--rd);background:var(--rdb)}
+.wrong-q-tag{
+  font-size:.7rem;padding:1px 7px;border-radius:var(--rr);
+  background:var(--pb);color:var(--p);white-space:nowrap
 }
-.wrong-chapter-card:hover{
-  transform:translateY(-3px);box-shadow:var(--shd2);border-color:var(--rd)
-}
-.wrong-chapter-card .ch-name{
-  font-size:.95rem;font-weight:600;margin-bottom:12px;color:var(--t);
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden
-}
-.wrong-chapter-card .ch-stat{display:flex;align-items:baseline;gap:6px;margin-bottom:8px}
-.wrong-chapter-card .ch-count{font-size:2rem;font-weight:700;color:var(--rd);line-height:1}
-.wrong-chapter-card .ch-count-label{font-size:.85rem;color:var(--t2)}
-.wrong-chapter-card .ch-sub{
-  font-size:.78rem;color:var(--t3);display:flex;align-items:center;gap:4px;margin-top:-4px;margin-bottom:10px
-}
-.wrong-chapter-card .ch-divider{height:1px;background:var(--bg2);margin:10px 0}
-.wrong-chapter-card .ch-type-tags{display:flex;flex-wrap:wrap;gap:6px}
-.wrong-chapter-card .ch-type-tag{
-  font-size:.72rem;padding:2px 10px;border-radius:var(--rr);
-  background:var(--pb);color:var(--p)
-}
-.wrong-chapter-card .ch-type-tag.danger{background:var(--rdb);color:var(--rd)}
-.wrong-chapter-card .ch-type-tag.success{background:var(--grb);color:var(--gr)}
-.wrong-chapter-card .ch-type-tag.warning{background:var(--ywb);color:var(--yw)}
-.wrong-chapter-card .ch-enter{
-  margin-top:10px;text-align:right;font-size:.78rem;color:var(--p);
-  opacity:0;transition:opacity var(--tr);font-weight:500
-}
-.wrong-chapter-card:hover .ch-enter{opacity:1}
+.wrong-q-ch{font-size:.75rem;color:var(--t2);white-space:nowrap}
+.wrong-q-num{font-size:.78rem;color:var(--t3);white-space:nowrap;min-width:3.5em}
+.wrong-q-txt{color:var(--t);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 
 /* ==================== 按钮 ==================== */
 .btn{
@@ -372,27 +351,36 @@ body{font-family:var(--ff);background:var(--bg);color:var(--t);min-height:100vh;
 .sh-lg .d-w{background:var(--rd)}
 .sh-lg .d-s{background:var(--bg2)}
 
-/* ==================== 大题 ==================== */
-.bq{max-width:650px;margin:0 auto;animation:fadeIn .3s ease}
-.bq-progress{font-size:.8rem;color:var(--t2);margin-bottom:16px;text-align:center}
-
-/* BQ列表卡片 */
+/* ==================== 大题列表卡片（可滚动，一题一卡） ==================== */
+.bq-list{max-width:760px;margin:0 auto;animation:fadeIn .3s ease}
+.bq-list-bar{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:10px 16px;margin-bottom:16px;
+  background:var(--cd);border:1px solid var(--bd);border-radius:var(--rl);
+  font-size:.9rem;font-weight:600;box-shadow:var(--shd)
+}
 .bq-list-card{
   background:var(--cd);border:1px solid var(--bd);border-radius:var(--rl);
-  padding:20px;box-shadow:var(--shd);margin-bottom:14px;animation:fadeIn .3s ease;
-  border-left:4px solid var(--p);transition:all var(--tr)
+  padding:20px 24px;margin-bottom:14px;box-shadow:var(--shd);transition:all var(--tr);
+  border-left:4px solid var(--p)
 }
 .bq-list-card:hover{box-shadow:var(--shd2)}
+.bq-back-link{color:var(--p);text-decoration:none;font-weight:600;font-size:.82rem}
+.bq-back-link:hover{text-decoration:underline}
 .bq-list-hd{display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap}
-.bq-list-num{margin-left:auto;font-size:.78rem;font-weight:600;color:var(--p)}
-.bq-list-q{font-size:1.02rem;line-height:1.7;color:var(--t);font-weight:500;margin-bottom:14px}
-.bq-list-a{
-  font-size:.93rem;line-height:1.8;color:var(--t);padding:14px 16px;
-  background:var(--grb);border-radius:var(--r);margin-bottom:12px
+.bq-list-mem{margin-left:auto;font-size:.78rem;font-weight:600;color:var(--gr)}
+.bq-list-q{
+  font-size:1.02rem;line-height:1.7;color:var(--t);font-weight:500;
+  white-space:pre-wrap;word-break:break-word
 }
-.bq-list-a p{margin-bottom:8px}
-.bq-list-a p:last-child{margin-bottom:0}
-.bq-list-actions{display:flex;justify-content:flex-end;gap:8px}
+.bq-list-a{margin-top:16px;border-top:1px dashed var(--bd);padding-top:14px}
+.bq-list-a-label{font-size:.78rem;font-weight:600;color:var(--t2);margin-bottom:10px;text-transform:uppercase;letter-spacing:1px}
+.bq-list-a-content{
+  font-size:.92rem;line-height:1.8;color:var(--t);
+  padding:14px 18px;background:var(--grb);border-radius:var(--r);
+  white-space:pre-wrap;word-break:break-word
+}
+.bq-list-actions{margin-top:14px;text-align:right}
 .bq-filter{display:flex;justify-content:center;font-size:.85rem;color:var(--t2);gap:6px;cursor:pointer}
 
 /* ==================== Toast ==================== */
@@ -406,6 +394,39 @@ body{font-family:var(--ff);background:var(--bg);color:var(--t);min-height:100vh;
 .toast-success{background:var(--gr)}
 .toast-warning{background:var(--yw)}
 .toast-error{background:var(--rd)}
+
+/* ==================== 错题本章节网格卡片 ==================== */
+.wrong-ch-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-bottom:16px}
+.wrong-ch-card{
+  background:var(--cd);border:1px solid var(--bd);border-radius:var(--rl);
+  padding:16px;cursor:pointer;transition:all var(--tr);box-shadow:var(--shd);
+  border-top:3px solid var(--rd);display:flex;flex-direction:column
+}
+.wrong-ch-card:hover{transform:translateY(-3px);box-shadow:var(--shd2);border-color:var(--rd)}
+.wrong-ch-hd{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.wrong-ch-icon{font-size:1.2rem}
+.wrong-ch-name{font-size:.9rem;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wrong-ch-badge{
+  font-size:.72rem;font-weight:700;padding:2px 10px;border-radius:var(--rr);
+  background:var(--rdb);color:var(--rd);white-space:nowrap
+}
+.wrong-ch-stats{display:flex;gap:6px;margin-bottom:10px}
+.wrong-ch-stat{flex:1;text-align:center;padding:6px 2px;background:var(--bg);border-radius:var(--r)}
+.wrong-ch-stat-num{display:block;font-size:1.1rem;font-weight:700;color:var(--t)}
+.wrong-ch-stat-lbl{display:block;font-size:.65rem;color:var(--t3);margin-top:2px}
+.wrong-ch-bar-wrap{margin-bottom:6px}
+.wrong-ch-bar{height:5px;background:var(--bg2);border-radius:3px;overflow:hidden;display:flex}
+.wrong-ch-bar-fill{height:100%;transition:width .4s ease}
+.wrong-ch-bar-fill.correct{background:var(--gr)}
+.wrong-ch-bar-fill.wrong{background:var(--rd)}
+.wrong-ch-ft{
+  display:flex;justify-content:space-between;font-size:.7rem;color:var(--t3);margin-top:auto;padding-top:4px
+}
+
+/* ==================== 自测历史 ==================== */
+.test-rst .modal-dlg{max-width:380px}
+.test-rst .modal-ft{justify-content:center;gap:12px}
+.hist-item:hover{box-shadow:var(--shd);border-color:var(--p)!important}
 
 /* ==================== 空状态 ==================== */
 .empty{text-align:center;padding:60px 20px;color:var(--t3)}

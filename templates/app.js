@@ -54,7 +54,7 @@
     }
   })();
 
-  var K = { ans: 'net_ans', res: 'net_res', bm: 'net_bm', wrong: 'net_wrong', bq: 'net_bq', theme: 'net_theme' };
+  var K = { ans: 'net_ans', res: 'net_res', bm: 'net_bm', wrong: 'net_wrong', bq: 'net_bq', theme: 'net_theme', hist: 'net_hist', atest: 'net_atest' };
   var LS = localStorage;
 
   function loadJ(k, def) {
@@ -74,6 +74,8 @@
     showSheet: false,
     bqRevealed: false,
     bqFilter: false,
+    showTestResult: false,
+    showHistory: false,
     _timer: null,
     _randomQs: [],
     _bqFilteredQs: null,
@@ -104,6 +106,10 @@
   var _bmRes = {};
   var _rdAns = {};
   var _rdRes = {};
+  var _bqRevealedMap = {};
+  var _history = loadJ(K.hist, '[]');
+  var _activeTest = null;
+  var _testTimerId = null;
 
   function isRetry() { return S.mode === 'wrong' || S.mode === 'bookmark'; }
   function rList() { return S.mode === 'wrong' ? _wrongList : _bmList; }
@@ -169,7 +175,6 @@
   function syncRetryToPerm() {
     Object.keys(_wrAns).forEach(function (id) {
       if (_wrRes[id] !== undefined) { S.answers[id] = _wrAns[id]; S.results[id] = _wrRes[id]; }
-      if (_wrRes[id] === true) S.wrongSet.delete(id); else if (_wrRes[id] === false) S.wrongSet.add(id);
     });
     Object.keys(_bmAns).forEach(function (id) {
       if (_bmRes[id] !== undefined) { S.answers[id] = _bmAns[id]; S.results[id] = _bmRes[id]; }
@@ -238,6 +243,9 @@
     LS.setItem(K.bm, JSON.stringify(Array.from(S.bookmarks)));
     LS.setItem(K.wrong, JSON.stringify(Array.from(S.wrongSet)));
     LS.setItem(K.bq, JSON.stringify(S.bqProg));
+    LS.setItem(K.hist, JSON.stringify(_history));
+    if (_activeTest) { LS.setItem(K.atest, JSON.stringify(_activeTest)); }
+    else { LS.removeItem(K.atest); }
   }
 
   function isTypeMode(m) {
@@ -307,6 +315,12 @@
       return q.answer.join(', ');
     }
     return '';
+  }
+
+  function getBQAnswerText(q) {
+    if (!q || q.answer === undefined || q.answer === null) return '';
+    if (Array.isArray(q.answer)) return q.answer.join(', ');
+    return String(q.answer);
   }
 
   
@@ -431,6 +445,132 @@
   }
 
   // ════════════════════════════════════════════════════════════
+  //  自测历史记录
+  // ════════════════════════════════════════════════════════════
+
+  function createTestId() {
+    var d = new Date();
+    var ds = d.getFullYear() + ('0'+(d.getMonth()+1)).slice(-2) + ('0'+d.getDate()).slice(-2);
+    var rs = Math.random().toString(36).substring(2,6);
+    return 't_' + ds + '_' + rs;
+  }
+
+  function createTestRecord(pool, chapter, order) {
+    var rec = {
+      id: createTestId(),
+      mode: 'wrong',
+      chapter: chapter,
+      order: order || 'seq',
+      startedAt: Date.now(),
+      completedAt: null,
+      total: pool.length,
+      answered: 0,
+      correct: 0,
+      qIds: pool.map(function(q) { return q.id; }),
+      answers: {},
+      results: {}
+    };
+    _activeTest = rec;
+    _wrAns = {};
+    _wrRes = {};
+    LS.setItem(K.atest, JSON.stringify(rec));
+    return rec;
+  }
+
+  function persistActiveTest() {
+    if (!_activeTest) return;
+    // 更新统计
+    var answered = 0, correct = 0;
+    _activeTest.qIds.forEach(function(id) {
+      if (_wrRes[id] !== undefined) {
+        answered++;
+        if (_wrRes[id]) correct++;
+      }
+    });
+    // 也同步wrAns/wrRes中的答案
+    Object.keys(_wrAns).forEach(function(id) {
+      _activeTest.answers[id] = _wrAns[id];
+      _activeTest.results[id] = _wrRes[id];
+    });
+    _activeTest.answered = answered;
+    _activeTest.correct = correct;
+    LS.setItem(K.atest, JSON.stringify(_activeTest));
+  }
+
+  function finishActiveTest() {
+    if (!_activeTest) return;
+    persistActiveTest();
+    _activeTest.completedAt = Date.now();
+    // 移入历史
+    _history.unshift({
+      id: _activeTest.id,
+      mode: _activeTest.mode,
+      chapter: _activeTest.chapter,
+      order: _activeTest.order,
+      startedAt: _activeTest.startedAt,
+      completedAt: _activeTest.completedAt,
+      total: _activeTest.total,
+      answered: _activeTest.answered,
+      correct: _activeTest.correct,
+      qIds: _activeTest.qIds,
+      answers: JSON.parse(JSON.stringify(_wrAns)),
+      results: JSON.parse(JSON.stringify(_wrRes))
+    });
+    if (_history.length > 50) _history = _history.slice(0, 50);
+    _activeTest = null;
+    LS.removeItem(K.atest);
+    LS.setItem(K.hist, JSON.stringify(_history));
+  }
+
+  function checkTestCompletion() {
+    if (!_activeTest || S.mode !== 'wrong') return false;
+    var allDone = true;
+    _activeTest.qIds.forEach(function(id) {
+      if (_wrRes[id] === undefined) allDone = false;
+    });
+    if (allDone) {
+      finishActiveTest();
+      S.showTestResult = true;
+      if (_testTimerId) { clearInterval(_testTimerId); _testTimerId = null; }
+      render();
+      return true;
+    }
+    persistActiveTest();
+    return false;
+  }
+
+  function resumeActiveTest(rec) {
+    if (!rec || !rec.qIds || !rec.qIds.length) return false;
+    // 根据 qIds 重建题目列表
+    var pool = [];
+    rec.qIds.forEach(function(id) {
+      var q = getAll().find(function(x) { return x.id === id; });
+      if (q) pool.push(q);
+    });
+    if (!pool.length) { toast('自测记录中的题目已不存在', 'warning'); return false; }
+    _wrongList = pool;
+    _wrAns = JSON.parse(JSON.stringify(rec.answers || {}));
+    _wrRes = JSON.parse(JSON.stringify(rec.results || {}));
+    _retryActive = true;
+    // 跳到第一道未答题
+    S.idx = 0;
+    for (var i = 0; i < pool.length; i++) {
+      if (_wrRes[pool[i].id] === undefined) { S.idx = i; break; }
+    }
+    S.mode = 'wrong';
+    S.chapter = rec.chapter === 'all' ? '_all' : rec.chapter;
+    _activeTest = rec;
+    if (_testTimerId) { clearInterval(_testTimerId); _testTimerId = null; }
+    // 开启计时心跳
+    _testTimerId = setInterval(function() {
+      if (_activeTest) persistActiveTest();
+    }, 10000);
+    toast('已恢复上次未完成的自测', 'info');
+    render();
+    return true;
+  }
+
+  // ════════════════════════════════════════════════════════════
   //  视图
   // ════════════════════════════════════════════════════════════
 
@@ -469,6 +609,19 @@
       html += '<button class="btn btn-p btn-sm" onclick="App.startWrong()">开始复习</button></div>';
     }
 
+    // 未完成自测恢复提示
+    var rawActive = LS.getItem(K.atest);
+    if (rawActive) {
+      try {
+        var activeRec = JSON.parse(rawActive);
+        if (activeRec && activeRec.qIds && activeRec.qIds.length) {
+          html += '<div class="wrong-banner" style="background:var(--ywb);border-color:var(--yw)">';
+          html += '<span>⏳ 有未完成的自测 (已完成 ' + activeRec.answered + '/' + activeRec.total + ' 题)</span>';
+          html += '<button class="btn btn-sm" style="background:var(--yw);color:#fff" onclick="App.resumeTest()">继续自测</button></div>';
+        }
+      } catch(e) {}
+    }
+
     html += '<h3 class="sec-title">🚀 快速开始</h3>';
     html += '<div class="dash-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">';
     TYPES.forEach(function (t) {
@@ -492,6 +645,34 @@
         html += '<div class="dash-bar"><div class="dash-fill" style="width:' + pct + '%"></div></div>';
         html += '</div>';
       });
+    }
+
+    // 自测历史（最近5条）
+    if (_history.length > 0) {
+      html += '<h3 class="sec-title">📊 最近自测</h3>';
+      html += '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px">';
+      var showCount = Math.min(_history.length, 5);
+      for (var hi = 0; hi < showCount; hi++) {
+        var rec = _history[hi];
+        var pct = rec.total > 0 ? Math.round(rec.correct / rec.total * 100) : 0;
+        var d = Math.round(((rec.completedAt || rec.startedAt) - rec.startedAt) / 1000);
+        var m = Math.floor(d / 60), s = d % 60;
+        var dt = new Date(rec.startedAt);
+        var ds = ('0'+(dt.getMonth()+1)).slice(-2) + '-' + ('0'+dt.getDate()).slice(-2) + ' ' + ('0'+dt.getHours()).slice(-2) + ':' + ('0'+dt.getMinutes()).slice(-2);
+        var status = rec.completedAt ? '' : ' (未完成)';
+        var borderClr = pct >= 60 ? 'var(--gr)' : 'var(--rd)';
+        html += '<div class="hist-item" onclick="App.viewTestHistory(\'' + rec.id + '\')" style="display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--cd);border:1px solid var(--bd);border-radius:var(--r);cursor:pointer;border-left:3px solid ' + borderClr + ';transition:all var(--tr)" onmouseover="this.style.boxShadow=\'var(--shd)\'" onmouseout="this.style.boxShadow=\'none\'">';
+        html += '<div style="font-size:.78rem;color:var(--t3);min-width:6em">' + ds + status + '</div>';
+        html += '<div style="flex:1;font-size:.85rem;font-weight:500">错题自测</div>';
+        html += '<div style="font-size:.78rem;color:var(--t2)">' + rec.correct + '/' + rec.total + '</div>';
+        html += '<div style="font-size:.85rem;font-weight:700;color:' + (pct >= 60 ? 'var(--gr)' : 'var(--rd)') + ';min-width:3em;text-align:right">' + pct + '%</div>';
+        html += '<div style="font-size:.72rem;color:var(--t3)">' + m + '\'' + s + '"</div>';
+        html += '</div>';
+      }
+      if (_history.length > 5) {
+        html += '<button class="btn btn-o btn-sm" onclick="App.showTestHistory()" style="width:100%">查看全部 ' + _history.length + ' 条记录</button>';
+      }
+      html += '</div>';
     }
 
     html += '</div>';
@@ -520,7 +701,7 @@
 
     html += '<div class="q-txt">' + escapeHtml(q.question) + '</div>';
     if (q.image) {
-      html += '<div class="q-img-wrap"><img class="q-img" src="' + escapeHtml(q.image) + '" alt="题目附图" loading="lazy" onerror="this.style.display='none'"></div>';
+      html += '<div class="q-img-wrap"><img class="q-img" src="' + escapeHtml(q.image) + '" alt="题目附图" loading="lazy" onerror="this.style.display=&quot;none&quot;"></div>';
     }
     html += '<div class="opts">';
     q.options.forEach(function (opt) {
@@ -572,104 +753,197 @@
     return html;
   }
 
-  // ── 大题闪卡 ──
-  function renderBQView() {
-    var q = current();
-    if (!q) return '<div class="empty"><p>暂无题目</p></div>';
-
-    var icons = { '填空': '📝', '简答': '📄', '计算': '🔢' };
-    var ic = icons[q.type] || '📄';
-    var html = '<div class="bq">';
-
-    html += '<div class="bq-hd">';
-    html += '<span class="tag tag-i">' + chName(q.chapter) + '</span>';
-    html += '<span class="tag tag-p">' + ic + ' ' + (q.type || '') + '</span>';
-    html += '<span class="bq-pos">' + (S.idx + 1) + '/' + total() + '</span>';
-    html += '</div>';
-
-    html += '<div class="bq-card">';
-    html += '<div class="bq-front"><div class="bq-label">📖 题目</div>';
-    html += '<div class="bq-q">' + escapeHtml(q.question) + '</div>';
-    if (q.image) {
-      html += '<div class="q-img-wrap"><img class="q-img" src="' + escapeHtml(q.image) + '" alt="题目附图" loading="lazy" onerror="this.style.display='none'"></div>';
-    }
-    if (!S.bqRevealed) {
-      html += '<div style="margin-top:24px;text-align:center"><button class="btn btn-p" onclick="App.revealBQ()">显示答案</button></div>';
-    }
-    html += '</div>';
-
-    if (S.bqRevealed) {
-      html += '<div class="bq-back"><div class="bq-label">✅ 参考答案</div>';
-      html += '<div class="bq-a">' + q.answer + '</div></div>';
-    }
-    html += '</div>';
-
-    var mem = S.bqProg[q.id] && S.bqProg[q.id].memorized;
-    html += '<div class="bq-actions">';
-    html += '<button class="nav-btn" onclick="App.back()" title="后退">↩️</button>';
-    html += '<button class="nav-btn" onclick="App.forward()" title="前进">↪️</button>';
-    html += '<button class="nav-btn" onclick="App.home()" title="首页">🏠</button>';
-    html += '<button class="nav-btn" onclick="App.prev()">◀ 上一题</button>';
-    if (S.bqRevealed) {
-      html += '<button class="btn btn-sm ' + (mem ? 'btn-s' : 'btn-p') + '" onclick="App.markBQ()">';
-      html += mem ? '✅ 已记住' : '标记已记住';
-      html += '</button>';
-    }
-    html += '<button class="nav-btn" onclick="App.next()">下一题 ▶</button>';
-    html += '</div>';
-
-    html += '<label class="bq-filter"><input type="checkbox" onchange="App.toggleBQFilter()"' + (S.bqFilter ? ' checked' : '') + '> 仅看未记住</label>';
-    html += '</div>';
-    return html;
-  }
-
-  // ── 选择题 — 章节网格概览 ──
+  // ── 选择题章节网格卡片（mcq 下 chapter='all' 时展示）──
   function renderMCQChapterGrid() {
-    var pool = getQs();
-    if (!pool.length) return '<div class="empty"><p>暂无题目</p><button class="btn btn-p" onclick="App.home()" style="margin-top:12px">返回首页</button></div>';
+    var qs = getQs();
+    if (!qs.length) return '<div class="empty"><p>暂无题目</p></div>';
 
-    var byChapter = {};
-    pool.forEach(function (q) {
-      if (!byChapter[q.chapter]) byChapter[q.chapter] = [];
-      byChapter[q.chapter].push(q);
+    // 按章节分组
+    var byCh = {};
+    qs.forEach(function (q) {
+      if (!byCh[q.chapter]) byCh[q.chapter] = [];
+      byCh[q.chapter].push(q);
     });
-    var chKeys = Object.keys(byChapter).sort();
+    var chKeys = Object.keys(byCh).sort();
+
+    var allTotal = qs.length, allAnswered = 0, allCorrect = 0;
+    qs.forEach(function (q) {
+      if (S.answers[q.id]) { allAnswered++; if (S.results[q.id]) allCorrect++; }
+    });
 
     var html = '<div class="dash">';
     html += '<div class="dash-hero" style="background:linear-gradient(135deg,var(--p),var(--p2))">';
-    html += '<div class="dash-hero-icon">\u270f\ufe0f</div><h2>选择题</h2>';
-    html += '<p>共 <strong>' + pool.length + '</strong> 道选择题</p></div>';
+    html += '<div class="dash-hero-icon">✏️</div><h2>选择题</h2>';
+    html += '<p>共 ' + allTotal + ' 题 · 已答 ' + allAnswered + '/' + allTotal + '</p>';
+    html += '<div class="dash-hero-stats">';
+    html += '<div class="dash-hero-s"><strong>' + allTotal + '</strong><span>总题</span></div>';
+    html += '<div class="dash-hero-s"><strong>' + allAnswered + '</strong><span>已答</span></div>';
+    html += '<div class="dash-hero-s"><strong>' + allCorrect + '</strong><span>正确</span></div>';
+    html += '<div class="dash-hero-s"><strong>' + (allAnswered - allCorrect) + '</strong><span>错误</span></div>';
+    html += '</div></div>';
 
-    html += '<div class="wrong-chapter-grid">';
+    html += '<div class="wrong-ch-grid">';
     chKeys.forEach(function (ch) {
-      var qs = byChapter[ch];
-      var total = qs.length;
-      var answered = 0, correct = 0;
-      qs.forEach(function (q) {
+      var chQs = byCh[ch];
+      var total = chQs.length, answered = 0, correct = 0;
+      chQs.forEach(function (q) {
         if (S.answers[q.id]) { answered++; if (S.results[q.id]) correct++; }
       });
       var wrong = answered - correct;
-      var pct = total ? Math.round(answered / total * 100) : 0;
+      var pct = total > 0 ? Math.round(answered / total * 100) : 0;
+      var done = answered === total;
 
-      html += '<div class="wrong-chapter-card" onclick="App.goChapter(\'' + ch + '\')" style="border-left-color:var(--p)">';
-      html += '<div class="ch-name">' + chName(ch) + '</div>';
-      html += '<div class="ch-stat"><span class="ch-count" style="color:var(--p)">' + total + '</span><span class="ch-count-label">道题目</span></div>';
-      html += '<div class="ch-sub">已完成 ' + answered + '/' + total + ' (' + pct + '%)</div>';
-      html += '<div class="ch-divider"></div>';
-      html += '<div class="ch-type-tags">';
-      if (answered > 0) {
-        html += '<span class="ch-type-tag success">\u2714\ufe0f 正确 ' + correct + '</span>';
-        if (wrong > 0) html += '<span class="ch-type-tag danger">\u2718\ufe0f 错误 ' + wrong + '</span>';
-      } else {
-        html += '<span class="ch-type-tag">\ud83d\udcd6 未开始</span>';
-      }
+      html += '<div class="wrong-ch-card" style="border-top-color:var(--p)" onclick="App.goChapter(\'' + ch + '\')">';
+      html += '<div class="wrong-ch-hd">';
+      html += '<span class="wrong-ch-icon">📖</span>';
+      html += '<span class="wrong-ch-name">' + chName(ch) + '</span>';
+      html += '<span class="ch-badge' + (done ? ' done' : '') + '">' + answered + '/' + total + '</span>';
       html += '</div>';
-      html += '<div class="ch-enter" style="color:var(--p)">开始答题 →</div>';
+      html += '<div class="wrong-ch-stats">';
+      html += '<div class="wrong-ch-stat"><span class="wrong-ch-stat-num">' + total + '</span><span class="wrong-ch-stat-lbl">总题</span></div>';
+      html += '<div class="wrong-ch-stat"><span class="wrong-ch-stat-num">' + correct + '</span><span class="wrong-ch-stat-lbl">正确</span></div>';
+      html += '<div class="wrong-ch-stat"><span class="wrong-ch-stat-num" style="color:' + (wrong > 0 ? 'var(--rd)' : 'var(--gr)') + '">' + wrong + '</span><span class="wrong-ch-stat-lbl">错误</span></div>';
+      html += '</div>';
+      html += '<div class="wrong-ch-bar-wrap"><div class="wrong-ch-bar">';
+      html += '<div class="wrong-ch-bar-fill correct" style="width:' + pct + '%"></div>';
+      html += '<div class="wrong-ch-bar-fill" style="width:' + (100 - pct) + '%;background:var(--bg2)"></div>';
+      html += '</div></div>';
+      html += '<div class="wrong-ch-ft"><span>已答 ' + answered + '/' + total + '</span>';
+      if (correct > 0) html += '<span style="color:var(--gr)">正确 ' + correct + '</span>';
+      html += '</div>';
       html += '</div>';
     });
+    html += '</div></div>';
+    return html;
+  }
+
+  // ── 大题章节网格卡片（type mode 下 chapter='all' 时展示）──
+  function renderBQChapterGrid() {
+    var qs = getQs();
+    if (!qs.length) return '<div class="empty"><p>暂无题目</p></div>';
+
+    var modeIcon = '', modeLabel = '';
+    TYPES.forEach(function (t) {
+      if (S.mode === t.mode) { modeIcon = t.icon; modeLabel = t.label; }
+    });
+
+    // 按章节分组
+    var byCh = {};
+    qs.forEach(function (q) {
+      if (!byCh[q.chapter]) byCh[q.chapter] = [];
+      byCh[q.chapter].push(q);
+    });
+    var chKeys = Object.keys(byCh).sort();
+
+    var allTotal = qs.length;
+    var allMem = 0;
+    qs.forEach(function (q) { if (S.bqProg[q.id] && S.bqProg[q.id].memorized) allMem++; });
+
+    var html = '<div class="dash">';
+    // Hero
+    html += '<div class="dash-hero" style="background:linear-gradient(135deg,var(--p),var(--p2))">';
+    html += '<div class="dash-hero-icon">' + modeIcon + '</div><h2>' + modeLabel + '</h2>';
+    html += '<p>共 ' + allTotal + ' 题 · 已记住 ' + allMem + '/' + allTotal + '</p>';
     html += '</div>';
 
+    // 过滤开关
+    html += '<div style="text-align:right;margin-bottom:12px">';
+    html += '<label class="bq-filter" style="display:inline-flex;align-items:center;gap:5px;font-size:.82rem;cursor:pointer;user-select:none">';
+    html += '<input type="checkbox" onchange="App.toggleBQFilter()"' + (S.bqFilter ? ' checked' : '') + '> 仅看未记住';
+    html += '</label></div>';
+
+    // 网格卡片
+    html += '<div class="wrong-ch-grid">';
+    chKeys.forEach(function (ch) {
+      var chQs = byCh[ch];
+      var total = chQs.length;
+      var memorized = 0;
+      chQs.forEach(function (q) { if (S.bqProg[q.id] && S.bqProg[q.id].memorized) memorized++; });
+      var pct = total > 0 ? Math.round(memorized / total * 100) : 0;
+      var done = memorized === total;
+
+      html += '<div class="wrong-ch-card" onclick="App.goChapter(\'' + ch + '\')">';
+      html += '<div class="wrong-ch-hd">';
+      html += '<span class="wrong-ch-icon">📖</span>';
+      html += '<span class="wrong-ch-name">' + chName(ch) + '</span>';
+      html += '<span class="ch-badge' + (done ? ' done' : '') + '">' + memorized + '/' + total + '</span>';
+      html += '</div>';
+      // 三列统计
+      html += '<div class="wrong-ch-stats">';
+      html += '<div class="wrong-ch-stat"><span class="wrong-ch-stat-num">' + total + '</span><span class="wrong-ch-stat-lbl">总题</span></div>';
+      html += '<div class="wrong-ch-stat"><span class="wrong-ch-stat-num">' + memorized + '</span><span class="wrong-ch-stat-lbl">已记住</span></div>';
+      html += '<div class="wrong-ch-stat"><span class="wrong-ch-stat-num" style="color:' + (pct >= 70 ? 'var(--gr)' : 'var(--yw)') + '">' + pct + '%</span><span class="wrong-ch-stat-lbl">记忆率</span></div>';
+      html += '</div>';
+      // 进度条
+      html += '<div class="wrong-ch-bar-wrap"><div class="wrong-ch-bar">';
+      html += '<div class="wrong-ch-bar-fill correct" style="width:' + pct + '%"></div>';
+      html += '<div class="wrong-ch-bar-fill" style="width:' + (100 - pct) + '%;background:var(--bg2)"></div>';
+      html += '</div></div>';
+      html += '<div class="wrong-ch-ft"><span>已记住 ' + memorized + '/' + total + '</span></div>';
+      html += '</div>';
+    });
+    html += '</div></div>';
+    return html;
+  }
+
+  // ── 大题列表卡片（按章节展示全部题目，可滚动）──
+  function renderBQListView() {
+    var qs = getQs();
+    if (!qs.length) return '<div class="empty"><p>暂无题目</p></div>';
+
+    var typeLabel = '';
+    var icons = { '填空': '📝', '简答': '📄', '计算': '🔢' };
+    TYPES.forEach(function (t) {
+      if (S.mode === t.mode) typeLabel = t.icon + ' ' + t.label;
+    });
+
+    var html = '<div class="bq-list">';
+    // 顶栏：返回 + 过滤开关
+    html += '<div class="bq-list-bar">';
+    html += '<span>' + (S.chapter && S.chapter !== 'all' ? '<a href="#" class="bq-back-link" onclick="App.goBQOverview();return false">← 返回目录</a> · ' : '') + typeLabel + ' · 共 ' + qs.length + ' 题</span>';
+    html += '<label class="bq-filter" style="display:inline-flex;align-items:center;gap:5px;font-size:.82rem;cursor:pointer;user-select:none">';
+    html += '<input type="checkbox" onchange="App.toggleBQFilter()"' + (S.bqFilter ? ' checked' : '') + '> 仅看未记住';
+    html += '</label>';
     html += '</div>';
+
+    qs.forEach(function (q) {
+      var ic = icons[q.type] || '📄';
+      var revealed = _bqRevealedMap[q.id] || false;
+      var mem = S.bqProg[q.id] && S.bqProg[q.id].memorized;
+
+      html += '<div class="bq-list-card" id="bq-' + q.id + '">';
+      // 卡片头：章节、题型、收藏、记忆状态
+      html += '<div class="bq-list-hd">';
+      html += '<span class="tag tag-i">' + chName(q.chapter) + '</span>';
+      html += '<span class="tag tag-p">' + ic + ' ' + (q.type || '') + '</span>';
+      if (S.wrongSet.has(q.id)) html += '<span class="tag tag-d">错题</span>';
+      html += '<button class="bm-btn" onclick="App.toggleBM(\'' + q.id + '\')">';
+      html += isBookmarked(q) ? '⭐' : '☆';
+      html += '</button>';
+      if (mem) html += '<span class="bq-list-mem">✅ 已记住</span>';
+      html += '</div>';
+      // 题目正文
+      html += '<div class="bq-list-q">' + escapeHtml(q.question) + '</div>';
+      if (q.image) {
+        html += '<div class="q-img-wrap"><img class="q-img" src="' + escapeHtml(q.image) + '" alt="题目附图" loading="lazy" onerror="this.style.display=&quot;none&quot;"></div>';
+      }
+      // 答案区
+      if (!revealed) {
+        html += '<div style="text-align:center;margin-top:16px"><button class="btn btn-p" onclick="App.revealBQ(\'' + q.id + '\')">显示答案</button></div>';
+      } else {
+        html += '<div class="bq-list-a"><div class="bq-list-a-label">✅ 参考答案</div>';
+        html += '<div class="bq-list-a-content">' + escapeHtml(getBQAnswerText(q)) + '</div></div>';
+      }
+      // 底部操作
+      html += '<div class="bq-list-actions">';
+      html += '<button class="btn btn-sm ' + (mem ? 'btn-s' : 'btn-p') + '" onclick="App.markBQ(\'' + q.id + '\')">';
+      html += mem ? '✅ 已记住' : '📌 标记已记住';
+      html += '</button>';
+      html += '</div>';
+      html += '</div>';
+    });
+
+    html += '</div>'; // close bq-list
     return html;
   }
 
@@ -711,80 +985,84 @@
     return html;
   }
 
-  // ── 错题本概览（按章节+类型分组）──
-  // ── 错题/收藏概览（网格卡片布局） ──
+  // ── 错题本概览（网格卡片，每章一张卡片）──
   function renderWrongOverview() {
     var ids = Array.from(rSet());
     if (!ids.length) {
       var msg = S.mode === 'wrong' ? '暂无错题 🎉' : '暂无收藏 ⭐';
       return '<div class="empty"><p>' + msg + '</p><button class="btn btn-p" onclick="App.home()" style="margin-top:12px">返回首页</button></div>';
     }
-
-    // 过滤：只统计题库中实际存在的题目ID，避免脏数据导致总数与明细不一致
-    ids = ids.filter(function (id) {
-      return (QUESTIONS || []).some(function (q) { return q.id === id; });
-    });
-    if (!ids.length) {
-      var msg = S.mode === 'wrong' ? '暂无错题 🎉' : '暂无收藏 ⭐';
-      return '<div class="empty"><p>' + msg + '</p><button class="btn btn-p" onclick="App.home()" style="margin-top:12px">返回首页</button></div>';
-    }
-
-    // 按章节分组
-    var byChapter = {};
+    // 按章节+类型分组（同时过滤已不存在的题目 ID）
+    var byChapterType = {};
+    var validCount = 0;
     ids.forEach(function (id) {
       var q = (QUESTIONS || []).find(function (x) { return x.id === id; });
       if (!q) return;
-      if (!byChapter[q.chapter]) byChapter[q.chapter] = [];
-      byChapter[q.chapter].push(q);
+      validCount++;
+      if (!byChapterType[q.chapter]) byChapterType[q.chapter] = { single: [], multiple: [] };
+      var t = q.type === 'single' ? 'single' : 'multiple';
+      byChapterType[q.chapter][t].push(q);
     });
-    var chapterKeys = Object.keys(byChapter).sort();
-    var isBookmark = S.mode === 'bookmark';
-    var bg = isBookmark ? 'linear-gradient(135deg,#f39c12,#e67e22)' : 'linear-gradient(135deg,var(--rd),#c0392b)';
-    var icon = isBookmark ? '⭐' : '❌';
-    var title = isBookmark ? '收藏题目' : '错题本';
-    var suffix = isBookmark ? '道收藏' : '道错题';
-
+    if (!validCount) {
+      var msg = S.mode === 'wrong' ? '暂无错题 🎉' : '暂无收藏 ⭐';
+      return '<div class="empty"><p>' + msg + '</p><button class="btn btn-p" onclick="App.home()" style="margin-top:12px">返回首页</button></div>';
+    }
+    var chKeys = Object.keys(byChapterType).sort();
+    var isBm = S.mode === 'bookmark';
+    var bg = isBm ? 'linear-gradient(135deg,#f39c12,#e67e22)' : 'linear-gradient(135deg,var(--rd),#c0392b)';
+    var icon = isBm ? '⭐' : '❌';
+    var title = isBm ? '收藏题目' : '错题本';
+    var suffix = isBm ? '道收藏' : '道错题';
     var html = '<div class="dash">';
     html += '<div class="dash-hero" style="background:' + bg + '">';
-    html += '<div class="dash-hero-icon">' + icon + '</div><h2>' + title + '</h2>';
-    html += '<p>共 <strong>' + ids.length + '</strong> ' + suffix + '</p>';
-    html += '</div>';
+    html += '<div class="dash-hero-icon">' + icon + '</div><h2>' + title + '</h2><p>共 <strong>' + validCount + '</strong> ' + suffix + '</p>';
 
-    // 网格卡片：每个章节一张卡片
-    html += '<div class="wrong-chapter-grid">';
-    chapterKeys.forEach(function (ch) {
-      var qs = byChapter[ch];
-      // 统计各题型错误数量
-      var singleCount = 0, multiCount = 0;
-      qs.forEach(function (q) {
-        if (q.type === 'single') singleCount++;
-        else multiCount++;
+    // 在 hero 区直接放自测按钮，保证始终可见
+    html += '<div style="margin-top:16px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button class="btn" style="background:rgba(255,255,255,.2);color:#fff;font-size:.9rem;padding:10px 28px;border:1px solid rgba(255,255,255,.3)" onclick="event.stopPropagation();App.openWrongDlg()">🎯 开始自测</button>';
+    html += '<button class="btn" style="background:rgba(255,255,255,.15);color:#fff;font-size:.9rem;padding:10px 28px;border:1px solid rgba(255,255,255,.3)" onclick="event.stopPropagation();App.showTestHistory()">📊 自测历史</button></div>';
+
+    html += '</div>'; // close dash-hero
+
+    // 网格卡片：每章一张
+    html += '<div class="wrong-ch-grid">';
+    chKeys.forEach(function (ch) {
+      var chData = byChapterType[ch];
+      var singleQs = chData.single || [], multiQs = chData.multiple || [];
+      var chTotal = singleQs.length + multiQs.length;
+
+      // 计算该章整体正确率（基于所有答题记录）
+      var allChQs = getAll().filter(function (q) { return q.chapter === ch; });
+      var answered = 0, correct = 0;
+      allChQs.forEach(function (q) {
+        if (S.answers[q.id]) { answered++; if (S.results[q.id]) correct++; }
       });
-      // 计算本章总题数和已完成数
-      var allInCh = getAll().filter(function (x) { return x.chapter === ch; });
-      var totalInCh = allInCh.length;
-      // 统计已作答的错题数（有结果记录就算已作答）
-      var answeredWrong = qs.filter(function (q) { return S.results[q.id] !== undefined; }).length;
+      var correctRate = answered > 0 ? Math.round(correct / answered * 100) : 0;
+      var wrongRate = answered > 0 ? Math.round((answered - correct) / answered * 100) : 0;
 
-      html += '<div class="wrong-chapter-card" onclick="App.goRetryChapter('' + ch + '')">';
-      html += '<div class="ch-name">' + chName(ch) + '</div>';
-      html += '<div class="ch-stat"><span class="ch-count">' + qs.length + '</span><span class="ch-count-label">' + (isBookmark ? '道收藏' : '道错题') + '</span></div>';
-      html += '<div class="ch-sub">本章共 ' + totalInCh + ' 题 · 已答 ' + answeredWrong + '/' + qs.length + ' 道错题</div>';
-      html += '<div class="ch-divider"></div>';
-      html += '<div class="ch-type-tags">';
-      if (singleCount > 0) html += '<span class="ch-type-tag danger">单选 ' + singleCount + '</span>';
-      if (multiCount > 0) html += '<span class="ch-type-tag warning">多选 ' + multiCount + '</span>';
+      html += '<div class="wrong-ch-card" onclick="App.goRetryChapter(\'' + ch + '\')">';
+      // 卡片头：章节名 + 错题数徽标
+      html += '<div class="wrong-ch-hd">';
+      html += '<span class="wrong-ch-icon">📖</span>';
+      html += '<span class="wrong-ch-name">' + chName(ch) + '</span>';
+      html += '<span class="wrong-ch-badge">' + chTotal + ' ' + suffix.replace('道','') + '</span>';
       html += '</div>';
-      html += '<div class="ch-enter">查看此章错题 →</div>';
+      // 三列统计数据：单选错 / 多选错 / 章节正确率
+      html += '<div class="wrong-ch-stats">';
+      html += '<div class="wrong-ch-stat"><span class="wrong-ch-stat-num">' + singleQs.length + '</span><span class="wrong-ch-stat-lbl">单选错</span></div>';
+      html += '<div class="wrong-ch-stat"><span class="wrong-ch-stat-num">' + multiQs.length + '</span><span class="wrong-ch-stat-lbl">多选错</span></div>';
+      html += '<div class="wrong-ch-stat"><span class="wrong-ch-stat-num" style="color:' + (correctRate >= 70 ? 'var(--gr)' : 'var(--rd)') + '">' + correctRate + '%</span><span class="wrong-ch-stat-lbl">正确率</span></div>';
+      html += '</div>';
+      // 双进度条：绿色正确 / 红色错误
+      html += '<div class="wrong-ch-bar-wrap">';
+      html += '<div class="wrong-ch-bar"><div class="wrong-ch-bar-fill correct" style="width:' + correctRate + '%"></div><div class="wrong-ch-bar-fill wrong" style="width:' + wrongRate + '%"></div></div>';
+      html += '</div>';
+      // 卡片脚：章节总题数
+      html += '<div class="wrong-ch-ft"><span>共 ' + allChQs.length + ' 题</span><span>错 ' + chTotal + ' 题</span></div>';
       html += '</div>';
     });
-    html += '</div>';
+    html += '</div>'; // close wrong-ch-grid
 
-    html += '<div style="text-align:center;margin-top:4px">';
-    html += '<button class="btn btn-p" onclick="App.openWrongDlg()" style="font-size:1rem;padding:12px 32px">🎯 开始自测</button>';
-    html += '</div>';
-
-    html += '</div>';
+    html += '</div>'; // close dash
     return html;
   }
 
@@ -821,6 +1099,70 @@
       html += '<button class="btn btn-p" onclick="App.startWrongTest()">开始自测</button></div></div></div>';
     }
 
+    // 自测结果弹窗
+    if (S.showTestResult && _activeTest === null && _history.length) {
+      var last = _history[0];
+      var pct = last.total > 0 ? Math.round(last.correct / last.total * 100) : 0;
+      var duration = Math.round((last.completedAt - last.startedAt) / 1000);
+      var min = Math.floor(duration / 60), sec = duration % 60;
+      var grade = pct >= 90 ? 'A' : pct >= 75 ? 'B' : pct >= 60 ? 'C' : pct >= 40 ? 'D' : 'F';
+      var gradeCls = 'grade-' + grade.toLowerCase();
+      var gradeColors = {A:'var(--gr)',B:'var(--p)',C:'var(--yw)',D:'#e67e22',F:'var(--rd)'};
+      var gradeText = pct >= 90 ? '优秀' : pct >= 75 ? '良好' : pct >= 60 ? '及格' : pct >= 40 ? '需努力' : '加油';
+      html += '<div class="modal-overlay" onclick="App.closeTestResult()"><div class="modal-dlg test-rst" onclick="event.stopPropagation()">';
+      html += '<div class="test-rst-hd" style="background:' + (gradeColors[grade] || 'var(--p)') + ';color:#fff;padding:24px 20px;text-align:center;border-radius:var(--rl) var(--rl) 0 0">';
+      html += '<div class="test-rst-grade ' + gradeCls + '" style="font-size:3rem;font-weight:800">' + grade + '</div>';
+      html += '<div style="font-size:.9rem;opacity:.9;margin-top:4px">' + gradeText + '</div>';
+      html += '<div style="font-size:2rem;font-weight:700;margin-top:8px">' + pct + '%</div>';
+      html += '</div>';
+      html += '<div class="test-rst-body" style="padding:20px">';
+      html += '<div class="test-rst-grid" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">';
+      html += '<div class="test-rst-item" style="text-align:center;padding:12px;background:var(--bg);border-radius:var(--r)"><div style="font-size:1.3rem;font-weight:700;color:var(--t)">' + last.total + '</div><div style="font-size:.72rem;color:var(--t3)">总题</div></div>';
+      html += '<div class="test-rst-item" style="text-align:center;padding:12px;background:var(--grb);border-radius:var(--r)"><div style="font-size:1.3rem;font-weight:700;color:var(--gr)">' + last.correct + '</div><div style="font-size:.72rem;color:var(--t3)">正确</div></div>';
+      html += '<div class="test-rst-item" style="text-align:center;padding:12px;background:var(--rdb);border-radius:var(--r)"><div style="font-size:1.3rem;font-weight:700;color:var(--rd)">' + (last.total - last.correct) + '</div><div style="font-size:.72rem;color:var(--t3)">错误</div></div>';
+      html += '</div>';
+      html += '<div class="test-rst-info" style="font-size:.82rem;color:var(--t2);text-align:center">用时：' + min + '分' + sec + '秒';
+      html += ' · ' + (last.chapter === 'all' ? '全部章节' : chName(last.chapter));
+      html += ' · ' + (last.order === 'shuffle' ? '乱序' : '顺序');
+      html += '</div></div>';
+      html += '<div class="modal-ft"><button class="btn btn-p" onclick="App.closeTestResult()">查看详情</button>';
+      html += '<button class="btn btn-o" onclick="App.showTestHistory()">查看历史</button></div></div></div>';
+    }
+
+    // 自测历史弹窗
+    if (S.showHistory && !S.showTestResult) {
+      html += '<div class="modal-overlay" onclick="App.closeTestHistory()"><div class="modal-dlg test-hist" onclick="event.stopPropagation()" style="max-width:520px">';
+      html += '<div class="modal-hd">📊 自测历史<span class="modal-x" onclick="App.closeTestHistory()">✕</span></div>';
+      html += '<div class="modal-bd" style="max-height:60vh;overflow-y:auto;padding:12px 16px">';
+      if (!_history.length) {
+        html += '<div style="text-align:center;padding:30px;color:var(--t3)">暂无自测记录</div>';
+      } else {
+        html += '<table style="width:100%;border-collapse:collapse;font-size:.82rem">';
+        html += '<thead><tr style="border-bottom:2px solid var(--bd);font-size:.72rem;color:var(--t3);text-transform:uppercase">';
+        html += '<th style="padding:6px 8px;text-align:left">日期</th><th style="padding:6px 8px;text-align:center">总题</th><th style="padding:6px 8px;text-align:center">正确</th><th style="padding:6px 8px;text-align:center">正确率</th><th style="padding:6px 8px;text-align:center">用时</th></tr></thead><tbody>';
+        _history.forEach(function(rec) {
+          var p = rec.total > 0 ? Math.round(rec.correct / rec.total * 100) : 0;
+          var d = Math.round(((rec.completedAt || rec.startedAt) - rec.startedAt) / 1000);
+          var m = Math.floor(d / 60), s = d % 60;
+          var dt = new Date(rec.startedAt);
+          var ds = dt.getFullYear() + '-' + ('0'+(dt.getMonth()+1)).slice(-2) + '-' + ('0'+dt.getDate()).slice(-2) + ' ' + ('0'+dt.getHours()).slice(-2) + ':' + ('0'+dt.getMinutes()).slice(-2);
+          var status = rec.completedAt ? '' : ' (未完成)';
+          var clr = rec.completedAt ? '' : ';opacity:.6';
+          html += '<tr style="border-bottom:1px solid var(--bd)' + clr + '" onclick="App.viewTestHistory(\'' + rec.id + '\')">';
+          html += '<td style="padding:8px;text-align:left">' + ds + status + '</td>';
+          html += '<td style="padding:8px;text-align:center">' + rec.total + '</td>';
+          html += '<td style="padding:8px;text-align:center;color:var(--gr)">' + rec.correct + '</td>';
+          html += '<td style="padding:8px;text-align:center;font-weight:600;color:' + (p >= 60 ? 'var(--gr)' : 'var(--rd)') + '">' + p + '%</td>';
+          html += '<td style="padding:8px;text-align:center">' + m + '\' ' + s + '"</td>';
+          html += '</tr>';
+        });
+        html += '</tbody></table>';
+      }
+      html += '</div>';
+      html += '<div class="modal-ft"><button class="btn btn-o" onclick="App.closeTestHistory()">关闭</button>';
+      html += '<button class="btn btn-d btn-sm" onclick="App.clearTestHistory()">清空历史</button></div></div></div>';
+    }
+
     return html;
   }
 
@@ -830,13 +1172,27 @@
     if (!S.showSheet) { panel.classList.remove('open'); return; }
     var qs = getQs();
     if (!qs.length || S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') { panel.classList.remove('open'); return; }
-    if (!(S.mode === 'mcq' || S.mode === 'random')) { panel.classList.remove('open'); return; }
+    if (!(S.mode === 'mcq' || S.mode === 'random' || S.mode === 'wrong' || S.mode === 'bookmark')) { panel.classList.remove('open'); return; }
     panel.classList.add('open');
     var html = '';
     qs.forEach(function (q, i) {
       var cls = 'sh-cell' + (i === S.idx ? ' cur' : '');
-      var a = isEphemeral() ? _rdAns[q.id] : S.answers[q.id];
-      var r = isEphemeral() ? _rdRes[q.id] : S.results[q.id];
+      var a, r;
+      if (isRetry() && !_retryActive) {
+        // 查看模式：用原始答案
+        a = S.answers[q.id];
+        r = S.results[q.id];
+      } else if (isEphemeral()) {
+        a = _rdAns[q.id];
+        r = _rdRes[q.id];
+      } else if (isRetry()) {
+        // 自测模式：用临时答案
+        a = rAnsObj()[q.id];
+        r = rResObj()[q.id];
+      } else {
+        a = S.answers[q.id];
+        r = S.results[q.id];
+      }
       if (a) cls += r ? ' correct' : ' wrong';
       else cls += ' skip';
       html += '<div class="' + cls + '" onclick="App.sheetJump(' + i + ')">' + (i + 1) + '</div>';
@@ -942,16 +1298,17 @@
 
     var content = '';
     if (S.mode === 'dashboard') content = renderDashboard();
-    else if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') content = S.chapter === 'all' ? renderBQChapterGrid() : renderBQChapterList();
-    else if (S.mode === 'bookmark') content = S.chapter === 'all' ? renderBookmarkOverview() : renderQuestionView();
+    else if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') {
+      content = (S.chapter === 'all' && !S._bmQs) ? renderBQChapterGrid() : renderBQListView();
+    } else if (S.mode === 'bookmark') content = S.chapter === 'all' ? renderBookmarkOverview() : renderQuestionView();
     else if (S.mode === 'wrong') content = S.chapter === 'all' ? renderWrongOverview() : renderQuestionView();
-    else if (S.mode === 'mcq') content = S.chapter === 'all' ? renderMCQChapterGrid() : renderQuestionView();
+    else if (S.mode === 'mcq') content = (S.chapter === 'all' && !S._bmQs) ? renderMCQChapterGrid() : renderQuestionView();
     else if (S.mode === 'random') content = renderQuestionView();
     else content = '<div class="empty"><p>选择题型开始学习</p></div>';
     document.getElementById('contentArea').innerHTML = content;
 
     document.getElementById('contentFooter').innerHTML =
-      (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') && S.chapter !== 'all'
+      (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc' || (S.mode === 'mcq' && S.chapter === 'all' && !S._bmQs))
         ? '<span>共 ' + Math.max(total(), 1) + ' 题</span><span>' + modeName + '</span>'
         : '<span>第 ' + (S.idx + 1) + '/' + Math.max(total(), 1) + ' 题</span><span>' + modeName + '</span>';
 
@@ -976,6 +1333,7 @@
     syncRetryToPerm();
     _retryActive = false;
     _rdAns = {}; _rdRes = {};
+    _bqRevealedMap = {};
     S.mode = prev.mode; S.chapter = prev.chapter; S.idx = prev.idx || 0;
     S._bmQs = prev._bmQs || null;
     S.showSheet = false; S.bqRevealed = false;
@@ -990,6 +1348,7 @@
     syncRetryToPerm();
     _retryActive = false;
     _rdAns = {}; _rdRes = {};
+    _bqRevealedMap = {};
     S.mode = next.mode; S.chapter = next.chapter; S.idx = next.idx || 0;
     S._bmQs = next._bmQs || null;
     S.showSheet = false; S.bqRevealed = false;
@@ -1001,6 +1360,7 @@
     syncRetryToPerm();
     _retryActive = false;
     _rdAns = {}; _rdRes = {};
+    _bqRevealedMap = {};
     S._bmQs = null;
     S.mode = 'dashboard'; S.chapter = 'all'; S.idx = 0; S.showSheet = false; S.bqRevealed = false; render();
   };
@@ -1010,8 +1370,15 @@
     syncRetryToPerm();
     _retryActive = false;
     _rdAns = {}; _rdRes = {};
+    _bqRevealedMap = {};
     S._bmQs = null;
     S.mode = mode; S.chapter = 'all'; S.idx = 0; S.showSheet = false; S.bqFilter = false; S._bqFilteredQs = null; render();
+  };
+
+  App.goBQOverview = function () {
+    navPush();
+    _bqRevealedMap = {};
+    S.chapter = 'all'; S.idx = 0; render();
   };
 
   App.goChapter = function (ch) {
@@ -1021,9 +1388,10 @@
     navPush();
     if (!isTypeMode(S.mode)) S.mode = 'mcq';
     S.chapter = ch;
+    _bqRevealedMap = {};
     var qs = getQs(); S.idx = 0;
     if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') {
-      // 列表模式，显示所有题，无需定位
+      // list view — idx unused
     } else {
       for (var i = 0; i < qs.length; i++) { if (!S.answers[qs[i].id]) { S.idx = i; break; } }
     }
@@ -1034,9 +1402,10 @@
     S.showSheet = false; S.bqRevealed = false;
     syncRetryToPerm();
     _retryActive = false;
+    _bqRevealedMap = {};
     if (m === 'wrong') { App.startWrong(); return; }
     if (m === 'random') { S.showRandomDlg = true; render(); return; }
-    
+
     S.mode = m; S.idx = 0; render();
   };
 
@@ -1054,7 +1423,7 @@
         }
       }
     }
-    if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') { /* 列表模式无需翻题 */ }
+    if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') { S.idx = (S.idx + 1) % n; S.bqRevealed = false; }
     else S.idx = (S.idx + 1) % n;
     updateProgress();
     render();
@@ -1074,7 +1443,7 @@
         }
       }
     }
-    if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') { /* 列表模式无需翻题 */ }
+    if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') { S.idx = (S.idx - 1 + n) % n; S.bqRevealed = false; }
     else S.idx = (S.idx - 1 + n) % n;
     updateProgress();
     render();
@@ -1096,7 +1465,9 @@
       else { var opt = q.options.find(function (o) { return o.label === label; }); cor = opt && opt.text === q.answer[0]; }
       if (isWr) {
         rAnsObj()[q.id] = ans; rResObj()[q.id] = cor;
-        render(); return;
+        persistActiveTest();
+        if (!checkTestCompletion()) render();
+        return;
       } else if (isEph) {
         _rdAns[q.id] = ans; _rdRes[q.id] = cor;
         if (!cor) { S.wrongSet.add(q.id); save(); }
@@ -1128,6 +1499,10 @@
     if (!isWr && !isEph) { if (ok) S.wrongSet.delete(q.id); else S.wrongSet.add(q.id); save(); }
     if (isEph && !ok) { S.wrongSet.add(q.id); save(); }
     if (!isEph) updateProgress();
+    if (isWr) {
+      persistActiveTest();
+      if (checkTestCompletion()) return;
+    }
     render();
   };
 
@@ -1162,6 +1537,13 @@
     _wrongList = pool;
     _wrAns = {}; _wrRes = {};
     _retryActive = true;
+    // 创建自测记录
+    createTestRecord(pool, chapter, order);
+    // 开启计时心跳（每10秒持久化一次）
+    if (_testTimerId) clearInterval(_testTimerId);
+    _testTimerId = setInterval(function() {
+      if (_activeTest) persistActiveTest();
+    }, 10000);
     S.mode = 'wrong';
     S.chapter = chapter === 'all' ? '_all' : chapter;
     S.idx = 0; S.showWrongDlg = false; render();
@@ -1226,7 +1608,10 @@
     S._bmQs = qs;
     S.mode = typeMode;
     S.chapter = ch;
-    if (typeMode !== 'mcq') S.bqRevealed = true;
+    if (typeMode !== 'mcq') {
+      // 收藏模式下默认所有题目答案展开
+      qs.forEach(function (q) { _bqRevealedMap[q.id] = true; });
+    }
     S.idx = 0; render();
   };
 
@@ -1242,16 +1627,20 @@
     S.mode = 'random'; S.idx = 0; S.showRandomDlg = false; render();
   };
 
-  App.revealBQ = function () {
-    // 列表模式答案始终可见，此函数改为切换筛选
-    App.toggleBQFilter();
+  App.revealBQ = function (qId) {
+    _bqRevealedMap[qId] = true;
+    S.bqProg[qId] = S.bqProg[qId] || {};
+    S.bqProg[qId].viewed = true;
+    save();
+    render();
   };
 
   App.markBQ = function (qId) {
-    if (!qId) return;
     S.bqProg[qId] = S.bqProg[qId] || {};
-    S.bqProg[qId].memorized = !S.bqProg[qId].memorized; S.bqProg[qId].viewed = true;
-    save(); render();
+    S.bqProg[qId].memorized = !S.bqProg[qId].memorized;
+    S.bqProg[qId].viewed = true;
+    save();
+    render();
   };
 
   App.toggleBQFilter = function () {
@@ -1265,6 +1654,52 @@
       S._bqFilteredQs = filtered;
     } else { S._bqFilteredQs = null; }
     render();
+  };
+
+  // ── 自测历史 ──
+  App.closeTestResult = function () {
+    S.showTestResult = false;
+    render();
+  };
+  App.showTestHistory = function () {
+    S.showTestResult = false;
+    S.showHistory = true;
+    render();
+  };
+  App.closeTestHistory = function () {
+    S.showHistory = false;
+    render();
+  };
+  App.viewTestHistory = function (recId) {
+    var rec = _history.find(function(r) { return r.id === recId; });
+    if (!rec) { toast('记录不存在', 'warning'); return; }
+    // 显示单个自测记录结果
+    S.showHistory = false;
+    // 推送一个临时结果弹窗
+    _history = _history.filter(function(r) { return r.id !== rec.id; });
+    _history.unshift(rec);
+    LS.setItem(K.hist, JSON.stringify(_history));
+    S.showTestResult = true;
+    render();
+  };
+  App.clearTestHistory = function () {
+    if (!confirm('确定清空所有自测历史记录？')) return;
+    _history = [];
+    LS.setItem(K.hist, JSON.stringify([]));
+    toast('已清空自测历史', 'success');
+    S.showHistory = false;
+    render();
+  };
+  App.resumeTest = function () {
+    var raw = LS.getItem(K.atest);
+    if (!raw) { toast('没有未完成的自测', 'warning'); return; }
+    try {
+      var rec = JSON.parse(raw);
+      navPush();
+      if (resumeActiveTest(rec)) {
+        S.showSheet = false;
+      }
+    } catch(e) { toast('恢复失败', 'error'); }
   };
 
   App.toggleSheet = function () { S.showSheet = !S.showSheet; render(); };
@@ -1295,6 +1730,28 @@
   // ════════════════════════════════════════════════════════════
 
   document.addEventListener('DOMContentLoaded', function () {
+    // 启动时同步错题本：清理孤立 ID，并从已有答题结果中重建错题
+    (function syncWrongSet() {
+      var allIds = {};
+      (QUESTIONS || []).forEach(function (q) { allIds[q.id] = true; });
+      (BIG_QUESTIONS || []).forEach(function (q) { allIds[q.id] = true; });
+      var dirty = false;
+      // 1. 移除 wrongSet / bookmarks 中已不存在的题目 ID
+      S.wrongSet.forEach(function (id) { if (!allIds[id]) { S.wrongSet.delete(id); dirty = true; } });
+      S.bookmarks.forEach(function (id) { if (!allIds[id]) { S.bookmarks.delete(id); dirty = true; } });
+      // 2. 扫描所有答题结果：答错的题目自动加入错题本
+      Object.keys(S.results).forEach(function (id) {
+        if (allIds[id] && S.results[id] === false && !S.wrongSet.has(id)) {
+          S.wrongSet.add(id); dirty = true;
+        }
+      });
+      // 3. 如果错题本中有 ID 在答题记录里显示已答对，则移除（用户后来答对了但未清除）
+      S.wrongSet.forEach(function (id) {
+        if (S.results[id] === true && allIds[id]) { S.wrongSet.delete(id); dirty = true; }
+      });
+      if (dirty) save();
+    })();
+
     var initTheme = LS.getItem(K.theme);
     if (initTheme) { document.documentElement.setAttribute('data-theme', initTheme); document.getElementById('themeBtn').textContent = initTheme === 'dark' ? '☀️' : '🌙'; }
 
@@ -1315,6 +1772,17 @@
     document.querySelectorAll('.mode-btn[data-mode]').forEach(function (btn) {
       btn.addEventListener('click', function () { App.setMode(this.getAttribute('data-mode')); });
     });
+
+    // 检查未完成的自测
+    var rawAtest = LS.getItem(K.atest);
+    if (rawAtest) {
+      try {
+        var savedTest = JSON.parse(rawAtest);
+        if (savedTest && savedTest.qIds && savedTest.qIds.length && savedTest.answered < savedTest.total) {
+          // 不自动恢复，但渲染时显示恢复横幅
+        }
+      } catch(e) {}
+    }
 
     try { render(); } catch (e) { console.error('render error:', e); }
   });
