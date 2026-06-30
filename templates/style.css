@@ -459,3 +459,47 @@ body{font-family:var(--ff);background:var(--bg);color:var(--t);min-height:100vh;
   .dash-hero-s{padding:8px 12px;min-width:60px}
   .dash-hero-s strong{font-size:1.1rem}
 }
+
+/* ==================== 答案编辑模块 ==================== */
+.ae-sidebar-section{padding:12px 16px;border-top:1px solid var(--sh);margin-top:auto}
+.ae-sidebar-lbl{font-size:.7rem;text-transform:uppercase;letter-spacing:1px;opacity:.5;margin-bottom:8px;color:var(--st)}
+.ae-toggle-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:10px 12px;margin:4px 0;border:2px solid transparent;border-radius:var(--r);background:var(--sh);color:var(--st);cursor:pointer;font-size:.82rem;font-weight:600;transition:all var(--tr)}
+.ae-toggle-btn:hover{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.2)}
+.ae-toggle-btn.ae-active{background:rgba(243,156,18,.2);border-color:var(--yw);color:var(--yw);box-shadow:0 0 8px rgba(243,156,18,.3)}
+.ae-toggle-state{font-size:.68rem;padding:2px 8px;border-radius:var(--rr);background:rgba(0,0,0,.2);min-width:28px;text-align:center}
+.ae-export-btn{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:8px 12px;margin:6px 0;border:1px solid rgba(255,255,255,.15);border-radius:var(--r);background:rgba(39,174,96,.15);color:var(--gr);cursor:pointer;font-size:.78rem;font-weight:500;transition:all var(--tr)}
+.ae-export-btn:hover{background:rgba(39,174,96,.25);border-color:var(--gr)}
+.ae-count{padding:6px 0;font-size:.72rem;color:var(--st);text-align:center;opacity:.85}
+.ae-edit-btn{display:inline-flex;align-items:center;gap:4px;margin-left:8px;padding:4px 10px;border:1px dashed var(--yw);border-radius:var(--r);background:rgba(243,156,18,.08);color:var(--yw);cursor:pointer;font-size:.78rem;font-weight:500;transition:all var(--tr);vertical-align:middle}
+.ae-edit-btn:hover{background:rgba(243,156,18,.18);border-style:solid;transform:translateY(-1px)}
+.ae-edit-btn-hd{margin-left:auto;font-size:.72rem;padding:3px 8px}
+.ae-edit-btn-bq{display:block;margin:10px auto 0;font-size:.78rem;padding:6px 16px}
+.ae-overridden-badge{animation:pulse-badge 2s infinite}
+@keyframes pulse-badge{0%,100%{opacity:1}50%{opacity:.6}}
+.ae-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:var(--z-md);display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .25s ease;padding:20px}
+.ae-modal-overlay.ae-show{opacity:1}
+.ae-modal-dlg{background:var(--cd);border-radius:var(--rl);box-shadow:var(--shd2);max-width:560px;width:100%;max-height:85vh;overflow-y:auto;transform:translateY(20px);transition:transform .25s ease}
+.ae-modal-dlg.ae-show{transform:translateY(0)}
+.ae-edit-panel{padding:24px}
+.ae-edit-title{font-size:1rem;font-weight:700;color:var(--t);margin-bottom:12px;padding-bottom:10px;border-bottom:2px solid var(--yw)}
+.ae-edit-q{font-size:.88rem;color:var(--t2);margin-bottom:16px;line-height:1.6;padding:10px 14px;background:var(--bg);border-radius:var(--r);border-left:3px solid var(--bl)}
+.ae-edit-opts{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+.ae-opt{display:flex;align-items:center;gap:10px;padding:10px 14px;border:2px solid var(--bd);border-radius:var(--r);cursor:pointer;transition:all var(--tr);font-size:.9rem}
+.ae-opt:hover{border-color:var(--p);background:var(--pb)}
+.ae-opt.ae-sel{border-color:var(--gr);background:var(--grb)}
+.ae-opt input[type="radio"],.ae-opt input[type="checkbox"]{accent-color:var(--p);width:18px;height:18px;cursor:pointer;flex-shrink:0}
+.ae-opt-l{font-weight:700;color:var(--p);min-width:24px;text-align:center;font-size:.95rem}
+.ae-opt-t{color:var(--t);flex:1}
+.ae-edit-field{margin-bottom:16px}
+.ae-lbl{display:block;font-size:.82rem;font-weight:600;color:var(--t2);margin-bottom:6px}
+.ae-textarea{width:100%;padding:12px;border:2px solid var(--bd);border-radius:var(--r);font-size:.9rem;font-family:inherit;color:var(--t);background:var(--bg);resize:vertical;transition:border-color var(--tr);min-height:80px}
+.ae-textarea:focus{border-color:var(--p);outline:none;box-shadow:0 0 0 3px var(--pb)}
+.ae-edit-acts{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.ae-edit-acts .btn-d{background:transparent;color:var(--rd);border:1px solid var(--rd)}
+.ae-edit-acts .btn-d:hover{background:var(--rdb)}
+@media(max-width:600px){
+  .ae-modal-dlg{max-width:95vw;max-height:90vh}
+  .ae-edit-panel{padding:16px}
+  .ae-edit-acts{flex-direction:column}
+  .ae-edit-acts .btn{width:100%}
+}

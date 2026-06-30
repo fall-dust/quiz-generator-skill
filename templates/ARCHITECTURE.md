@@ -9,10 +9,14 @@
   1. questions.js      → 定义 var QUESTIONS = [...]
   2. bigquestions.js   → 定义 var BIG_QUESTIONS = [...]
   3. app.js            → IIFE 立即执行, 注册 window.App, 绑定 DOMContentLoaded
+  4. editor.js         → IIFE 立即执行, 应用答案覆盖, 注册 window.Editor
 
-DOMContentLoaded 触发:  render() → innerHTML 填充各个容器
+DOMContentLoaded 触发:
+  1. app.js:   render() → innerHTML 填充各个容器
+  2. editor.js: createSidebarUI() → 注入编辑管理区块
+                startObserver()   → 监听内容变化注入编辑按钮
 
-关键: 数据文件必须先加载, app.js 后加载。
+关键: 数据文件必须先加载, editor.js 在 app.js 之后加载以覆盖已规范化的答案。
 ```
 
 ### 引入第三方库（本地优先 + CDN 回退）
@@ -28,6 +32,7 @@ DOMContentLoaded 触发:  render() → innerHTML 填充各个容器
         onerror="this.outerHTML='<script src=\'https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js\'><\/script>'"></script>
 
 <script src="js/app.js"></script>
+<script src="js/editor.js"></script>
 ```
 
 运行 `python js/lib/download-libs.py` 可将所有第三方库预下载到本地，离线可用。
@@ -94,13 +99,32 @@ mode=calc → getBQByType('计算').filter(by chapter)
 │  window.App = { ... }  // 全局操作接口        │
 │  ├── 导航: goChapter/setMode/next/prev        │
 │  ├── 答题: pick/confirmMC/toggleBM            │
-│  ├── 错题: startWrong/removeFromWrong         │
+│  ├── 错题: startWrong/removeFromRetry         │
+│  ├── 重判: reevaluate(qId)                   │
+│  ├── 渲染: render()                           │
 │  ├── 随机: startRandom                        │
-│  ├── 考试: startExam/submitExam               │
 │  ├── 大题: revealBQ/markBQ/toggleBQFilter     │
 │  └── UI: toggleSheet/toggleTheme/clearData    │
 │                                               │
 │  DOMContentLoaded → 事件绑定 → render()       │
+└───────────────────────────────────────────────┘
+
+┌─ editor.js ──────────────────────────────────┐
+│                                               │
+│  IIFE 闭包区域:                                │
+│  ├── Overrides — 答案覆盖层 (localStorage)    │
+│  ├── applyAllOverrides() — 启动时注入         │
+│  ├── Editor 对象 — 对外接口                   │
+│  │   ├── toggleEditMode()                    │
+│  │   ├── openEditor(qId)                     │
+│  │   ├── saveMCQEdit / saveBQEdit             │
+│  │   ├── restoreOriginal(qId)                │
+│  │   ├── exportFile()                        │
+│  │   └── clearAllOverrides()                 │
+│  ├── MutationObserver — 自动注入编辑按钮      │
+│  └── generateCorrectedJS() — 导出修正文件     │
+│                                               │
+│  DOMContentLoaded → 侧边栏 + Observer        │
 └───────────────────────────────────────────────┘
 ```
 
@@ -197,9 +221,11 @@ else:
 
 | 文件 | 行数 |
 |------|------|
-| index.html | ~50 |
-| style.css | ~370 |
-| app.js | ~500 |
+| index.html | ~100 |
+| style.css | ~530 |
+| app.js | ~1850 |
+| editor.js | ~770 |
 | questions.js | ~2100 |
 | bigquestions.js | ~680 |
 | download-libs.py | ~80 |
+| apply_edits.py | ~500 |

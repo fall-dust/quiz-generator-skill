@@ -1470,11 +1470,12 @@
         return;
       } else if (isEph) {
         _rdAns[q.id] = ans; _rdRes[q.id] = cor;
-        if (!cor) { S.wrongSet.add(q.id); save(); }
+        if (!cor) { S.wrongSet.add(q.id); save(); toast('❌ 已加入错题本', 'warning'); }
         render(); return;
       } else {
         S.answers[q.id] = ans; S.results[q.id] = cor;
-        if (cor) S.wrongSet.delete(q.id); else S.wrongSet.add(q.id);
+        if (cor) { S.wrongSet.delete(q.id); toast('✅ 已从错题本移出', 'success'); }
+        else { S.wrongSet.add(q.id); toast('❌ 已加入错题本', 'warning'); }
         save();
       }
       updateProgress();
@@ -1496,8 +1497,8 @@
     var u = (tgtAns[q.id] || []).slice().sort(), c = q.answer.slice().sort();
     var ok = u.length === c.length && u.every(function (v, i) { return v === c[i]; });
     tgtRes[q.id] = ok;
-    if (!isWr && !isEph) { if (ok) S.wrongSet.delete(q.id); else S.wrongSet.add(q.id); save(); }
-    if (isEph && !ok) { S.wrongSet.add(q.id); save(); }
+    if (!isWr && !isEph) { if (ok) { S.wrongSet.delete(q.id); toast('✅ 已从错题本移出', 'success'); } else { S.wrongSet.add(q.id); toast('❌ 已加入错题本', 'warning'); } save(); }
+    if (isEph && !ok) { S.wrongSet.add(q.id); save(); toast('❌ 已加入错题本', 'warning'); }
     if (!isEph) updateProgress();
     if (isWr) {
       persistActiveTest();
@@ -1553,6 +1554,8 @@
     if (_wrAns[qId] !== undefined) { S.answers[qId] = _wrAns[qId]; S.results[qId] = _wrRes[qId]; }
     if (_bmAns[qId] !== undefined) { S.answers[qId] = _bmAns[qId]; S.results[qId] = _bmRes[qId]; }
     rSet().delete(qId);
+    var _removedFrom = S.mode === 'bookmark' ? '收藏' : '错题本';
+    toast('✅ 已从' + _removedFrom + '移出', 'success');
     delete _wrAns[qId]; delete _wrRes[qId];
     delete _bmAns[qId]; delete _bmRes[qId];
     if (S.mode === 'wrong') {
@@ -1721,8 +1724,50 @@
     toast('已清除', 'success'); render();
   };
 
-  
+  // ── 答案修正后重判：由 editor.js 调用 ──
+  App.reevaluate = function (qId) {
+    var q = getAll().find(function (x) { return x.id === qId; }) ||
+            getBQ().find(function (x) { return x.id === qId; });
+    if (!q) return null;
 
+    var userAns = S.answers[qId];
+    if (!userAns || !userAns.length) return null;
+
+    var oldResult = S.results[qId];
+    var newResult;
+
+    if (q.options && q.options.length > 0) {
+      var userSorted = (userAns || []).slice().sort();
+      var ansRef = Array.isArray(q.answer) ? q.answer.slice() : String(q.answer).split('').filter(function (c) { return c.trim(); });
+      var correctSorted = ansRef.sort();
+      newResult = userSorted.length === correctSorted.length &&
+                  userSorted.every(function (v, i) { return v === correctSorted[i]; });
+    } else {
+      return null; // 大题无自动判分
+    }
+
+    if (oldResult === newResult) return { oldResult: oldResult, newResult: newResult, changed: false };
+
+    S.results[qId] = newResult;
+
+    if (oldResult === false && newResult === true) {
+      if (S.wrongSet.has(qId)) {
+        S.wrongSet.delete(qId);
+        toast('✅ 答案修正后回答变正确，已移出错题本', 'success');
+      }
+    } else if (oldResult === true && newResult === false) {
+      if (!S.wrongSet.has(qId)) {
+        S.wrongSet.add(qId);
+        toast('⚠️ 答案修正后原回答变错误，已加入错题本', 'warning');
+      }
+    }
+
+    save();
+    render();
+    return { oldResult: oldResult, newResult: newResult, changed: true };
+  };
+
+  App.render = render;
   window.App = App;
 
   // ════════════════════════════════════════════════════════════
