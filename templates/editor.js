@@ -1,17 +1,29 @@
 // ═══════════════════════════════════════════════════════════════
-// 答案编辑模块 — 运行时覆盖 + 编辑UI + 导出
+// 题库编辑器 — 全字段编辑 + 运行时覆盖 + 导出 + Python 本地写入
+//
 // 从第一性原理设计：
-//   1. 运行时层：localStorage 答案覆盖，对 app.js 透明
-//   2. 编辑UI层：侧边栏开关 + 题目编辑控件
-//   3. 持久化层：浏览器下载修正后的 questions.js
-// 依赖：QUESTIONS, BIG_QUESTIONS, CHAPTER_NAMES（由 questions.js 提供）
-// 加载时机：在 app.js 之后加载，覆盖已规范化的答案
+//   浏览器无法写文件 → 两条互补持久化路径：
+//     A. 浏览器下载完整新版 questions.js（用户手动替换）
+//     B. 导出编辑清单 JSON → python apply_edits.py 直接修改源文件
+//
+//  可编辑字段（全题型）：
+//    - 题目文本 (question)
+//    - 选项文本 (options[].text)  — 仅选择题
+//    - 正确答案 (answer)
+//
+//  三层架构：
+//    1. 运行时覆盖层：localStorage → 内存对象（对 app.js 透明）
+//    2. 编辑 UI 层：侧边栏开关 + 弹窗编辑器 + DOM 注入控件
+//    3. 持久化层：浏览器下载 / File System API / Python 脚本
+//
+// 依赖：QUESTIONS, BIG_QUESTIONS, CHAPTER_NAMES（questions.js 提供）
+// 加载时机：app.js 之后，覆盖已规范化的数据
 // ═══════════════════════════════════════════════════════════════
 
 (function () {
   'use strict';
 
-  var LS_KEY = 'net_answer_overrides';
+  var LS_KEY = 'net_editor_overrides';
   var LS = localStorage;
 
   // ── 工具 ──
@@ -23,48 +35,30 @@
   }
 
   // ═══════════════════════════════════════════════════════════
-  //  第一层：运行时答案覆盖
-  //  直接修改内存中 q.answer，对 app.js 完全透明
+  //  第一层：全字段运行时覆盖
+  //
+  //  覆盖结构：{ qId: { question?, options?, answer? } }
+  //  只存储被修改的字段，未修改的字段从原始数据读取
   // ═══════════════════════════════════════════════════════════
 
   var Overrides = {
     _data: loadJ(LS_KEY, '{}'),
-    _originals: {},  // qId → original answer（用于还原）
+    _originals: {},  // qId → { question, options, answer } 原始值快照
 
-    // 获取某题的覆盖答案，无覆盖返回 null
+    // 获取某题的覆盖数据，无覆盖返回 null
     get: function (qId) {
-      return this._data[qId] !== undefined ? this._data[qId] : null;
+      return this._data[qId] || null;
     },
 
-    // 是否有覆盖
+    // 是否有任何覆盖
     has: function (qId) {
-      return this._data[qId] !== undefined;
+      return !!this._data[qId];
     },
 
-    // 设置覆盖并立即应用到内存对象
-    set: function (qId, newAnswer, q) {
-      // 保存原始答案
-      if (!(qId in this._originals) && q) {
-        this._originals[qId] = JSON.parse(JSON.stringify(q.answer));
-      }
-      this._data[qId] = newAnswer;
-      saveJ(LS_KEY, this._data);
-      // 立即应用到内存
-      if (q) {
-        q.answer = JSON.parse(JSON.stringify(newAnswer));
-        q._overridden = true;
-      }
-    },
-
-    // 移除覆盖
-    remove: function (qId, q) {
-      if (this._originals[qId] && q) {
-        q.answer = JSON.parse(JSON.stringify(this._originals[qId]));
-        q._overridden = false;
-      }
-      delete this._data[qId];
-      delete this._originals[qId];
-      saveJ(LS_KEY, this._data);
+    // 是否有特定字段覆盖
+    hasField: function (qId, field) {
+      var ov = this._data[qId];
+      return ov && ov[field] !== undefined;
     },
 
     // 获取覆盖数量
@@ -72,113 +66,158 @@
       return Object.keys(this._data).length;
     },
 
-    // 获取所有覆盖（用于导出）
+    // 获取全部覆盖（用于导出）
     getAll: function () {
       return JSON.parse(JSON.stringify(this._data));
+    },
+
+    // 保存覆盖并立即应用到内存
+    // patch: { question?, options?, answer? } — 只包含要修改的字段
+    set: function (qId, patch, q) {
+      // 首次覆盖时保存原始值快照
+      if (!this._originals[qId] && q) {
+        this._originals[qId] = {
+          question: q.question,
+          options: q.options ? q.options.map(function (o) { return { label: o.label, text: o.text }; }) : undefined,
+          answer: JSON.parse(JSON.stringify(q.answer))
+        };
+      }
+
+      // 合并覆盖（增量更新，不覆盖未修改字段）
+      if (!this._data[qId]) this._data[qId] = {};
+      for (var key in patch) {
+        if (patch.hasOwnProperty(key) && patch[key] !== undefined) {
+          this._data[qId][key] = patch[key];
+        }
+      }
+
+      saveJ(LS_KEY, this._data);
+
+      // 立即应用到内存对象
+      if (q) {
+        if (patch.question !== undefined) q.question = patch.question;
+        if (patch.options !== undefined) {
+          for (var i = 0; i < patch.options.length; i++) {
+            if (q.options && q.options[i]) {
+              q.options[i].text = patch.options[i].text;
+            }
+          }
+        }
+        if (patch.answer !== undefined) {
+          q.answer = JSON.parse(JSON.stringify(patch.answer));
+        }
+        q._overridden = this.has(qId);
+      }
+    },
+
+    // 移除某题的全部覆盖
+    remove: function (qId, q) {
+      var orig = this._originals[qId];
+      if (orig && q) {
+        if (orig.question !== undefined) q.question = orig.question;
+        if (orig.options !== undefined) {
+          for (var i = 0; i < orig.options.length; i++) {
+            if (q.options && q.options[i]) {
+              q.options[i].text = orig.options[i].text;
+            }
+          }
+        }
+        if (orig.answer !== undefined) {
+          q.answer = JSON.parse(JSON.stringify(orig.answer));
+        }
+        q._overridden = false;
+      }
+      delete this._data[qId];
+      delete this._originals[qId];
+      saveJ(LS_KEY, this._data);
+    },
+
+    // 清空全部覆盖
+    clearAll: function () {
+      var self = this;
+      var allQs = getAllQuestions();
+      Object.keys(this._data).forEach(function (qId) {
+        var q = findQInArray(allQs, qId);
+        var orig = self._originals[qId];
+        if (orig && q) {
+          if (orig.question !== undefined) q.question = orig.question;
+          if (orig.options !== undefined) {
+            for (var i = 0; i < orig.options.length; i++) {
+              if (q.options && q.options[i]) q.options[i].text = orig.options[i].text;
+            }
+          }
+          if (orig.answer !== undefined) q.answer = JSON.parse(JSON.stringify(orig.answer));
+          q._overridden = false;
+        }
+      });
+      this._data = {};
+      this._originals = {};
+      saveJ(LS_KEY, {});
     }
   };
 
-  // ── 启动时：将覆盖应用到所有已加载的题目对象 ──
+  // ── 启动时：将全部覆盖应用到内存对象 ──
   function applyAllOverrides() {
-    var allQs = [].concat(
-      (typeof QUESTIONS !== 'undefined' ? QUESTIONS : []),
-      (typeof BIG_QUESTIONS !== 'undefined' ? BIG_QUESTIONS : [])
-    );
+    var allQs = getAllQuestions();
     allQs.forEach(function (q) {
       var ov = Overrides.get(q.id);
-      if (ov !== null) {
-        Overrides._originals[q.id] = JSON.parse(JSON.stringify(q.answer));
-        q.answer = JSON.parse(JSON.stringify(ov));
-        q._overridden = true;
+      if (!ov) return;
+
+      // 保存原始快照
+      Overrides._originals[q.id] = {
+        question: q.question,
+        options: q.options ? q.options.map(function (o) { return { label: o.label, text: o.text }; }) : undefined,
+        answer: JSON.parse(JSON.stringify(q.answer))
+      };
+
+      // 应用覆盖
+      if (ov.question !== undefined) q.question = ov.question;
+      if (ov.options !== undefined) {
+        for (var i = 0; i < ov.options.length; i++) {
+          if (q.options && q.options[i]) {
+            q.options[i].text = ov.options[i].text;
+          }
+        }
       }
+      if (ov.answer !== undefined) {
+        q.answer = JSON.parse(JSON.stringify(ov.answer));
+      }
+      q._overridden = true;
     });
   }
 
-  // 找题工具
-  function findQ(qId) {
-    var q = (typeof QUESTIONS !== 'undefined' ? QUESTIONS : []).find(function (x) { return x.id === qId; });
-    if (!q) {
-      q = (typeof BIG_QUESTIONS !== 'undefined' ? BIG_QUESTIONS : []).find(function (x) { return x.id === qId; });
+  // 工具函数
+  function getAllQuestions() {
+    return [].concat(
+      (typeof QUESTIONS !== 'undefined' ? QUESTIONS : []),
+      (typeof BIG_QUESTIONS !== 'undefined' ? BIG_QUESTIONS : [])
+    );
+  }
+
+  function findQInArray(arr, qId) {
+    for (var i = 0; i < arr.length; i++) {
+      if (arr[i].id === qId) return arr[i];
     }
-    return q || null;
+    return null;
   }
 
-  // ═══════════════════════════════════════════════════════════
-  //  第二层：编辑 UI
-  //  侧边栏开关 + MutationObserver 注入编辑控件
-  // ═══════════════════════════════════════════════════════════
-
-  var EDIT_MODE = false;
-
-  function escapeHtml(s) {
-    if (!s) return '';
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  function findQ(qId) {
+    return findQInArray(getAllQuestions(), qId);
   }
 
-  // 判断是否为 MCQ 类型（有 options 的）
   function isMCQ(q) {
     return q && q.options && q.options.length > 0;
   }
 
-  // 生成 MCQ 答案编辑器的 HTML
-  function renderMCQEditor(q) {
-    var currentAns = Array.isArray(q.answer) ? q.answer.join('') : String(q.answer);
-    var html = '<div class="ae-edit-panel" id="ae-panel-' + q.id + '">';
-    html += '<div class="ae-edit-title">修改答案 — ' + escapeHtml(q.id) + '</div>';
-    html += '<div class="ae-edit-q">' + escapeHtml(q.question) + '</div>';
-    html += '<div class="ae-edit-opts">';
-    q.options.forEach(function (opt) {
-      var isSel = currentAns.indexOf(opt.label) >= 0;
-      html += '<label class="ae-opt' + (isSel ? ' ae-sel' : '') + '">';
-      html += '<input type="' + (isMCQMulti(q) ? 'checkbox' : 'radio') + '" name="ae-ans-' + q.id + '" value="' + opt.label + '"' + (isSel ? ' checked' : '') + '>';
-      html += '<span class="ae-opt-l">' + opt.label + '</span>';
-      html += '<span class="ae-opt-t">' + escapeHtml(opt.text) + '</span>';
-      html += '</label>';
-    });
-    html += '</div>';
-    html += '<div class="ae-edit-acts">';
-    html += '<button class="btn btn-sm btn-o" onclick="Editor.cancelEdit(\'' + q.id + '\')">取消</button>';
-    html += '<button class="btn btn-sm btn-p" onclick="Editor.saveMCQEdit(\'' + q.id + '\')">✅ 保存</button>';
-    if (Overrides.has(q.id)) {
-      html += '<button class="btn btn-sm btn-d" onclick="Editor.restoreOriginal(\'' + q.id + '\')">↩ 还原原始答案</button>';
-    }
-    html += '</div>';
-    html += '</div>';
-    return html;
-  }
-
   function isMCQMulti(q) {
-    // 判断题视为单选
     if (q._origType === '判断') return false;
-    // 原始答案为多字母("AB")或有 type 为 multiple 的为多选
     if (q._origType === 'multiple') return true;
-    // 如果原始 answer 是字符串且长度 > 1（说明是多选），如 "AB"
-    if (Overrides._originals[q.id]) {
-      var orig = Overrides._originals[q.id];
-      if (Array.isArray(orig) && orig.length > 1) return true;
-    }
     return false;
   }
 
-  // 生成大题答案编辑器的 HTML（填空/简答/计算）
-  function renderBQEditor(q) {
-    var currentAns = Array.isArray(q.answer) ? q.answer.join(', ') : String(q.answer || '');
-    var html = '<div class="ae-edit-panel" id="ae-panel-' + q.id + '">';
-    html += '<div class="ae-edit-title">修改答案 — ' + escapeHtml(q.id) + ' <span class="tag tag-i">' + escapeHtml(chName(q.chapter)) + '</span></div>';
-    html += '<div class="ae-edit-q">' + escapeHtml(q.question) + '</div>';
-    html += '<div class="ae-edit-field">';
-    html += '<label class="ae-lbl">正确答案：</label>';
-    html += '<textarea class="ae-textarea" id="ae-text-' + q.id + '" rows="3">' + escapeHtml(currentAns) + '</textarea>';
-    html += '</div>';
-    html += '<div class="ae-edit-acts">';
-    html += '<button class="btn btn-sm btn-o" onclick="Editor.cancelEdit(\'' + q.id + '\')">取消</button>';
-    html += '<button class="btn btn-sm btn-p" onclick="Editor.saveBQEdit(\'' + q.id + '\')">✅ 保存</button>';
-    if (Overrides.has(q.id)) {
-      html += '<button class="btn btn-sm btn-d" onclick="Editor.restoreOriginal(\'' + q.id + '\')">↩ 还原原始答案</button>';
-    }
-    html += '</div>';
-    html += '</div>';
-    return html;
+  function escapeHtml(s) {
+    if (!s) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
   function chName(ch) {
@@ -187,53 +226,157 @@
     return n ? '第' + n + '章' : (ch || '');
   }
 
-  // 在题目卡片中注入编辑按钮
+  // 获取题目当前生效的字段值（考虑覆盖）
+  function effectiveQuestion(q) {
+    var ov = Overrides.get(q.id);
+    return (ov && ov.question !== undefined) ? ov.question : q.question;
+  }
+  function effectiveOptions(q) {
+    var ov = Overrides.get(q.id);
+    if (ov && ov.options) return ov.options;
+    return q.options ? q.options.map(function (o) { return { label: o.label, text: o.text }; }) : [];
+  }
+  function effectiveAnswer(q) {
+    if (Array.isArray(q.answer)) return q.answer.join('');
+    return String(q.answer || '');
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //  第二层：编辑 UI — 弹窗编辑器（支持全字段）
+  // ═══════════════════════════════════════════════════════════
+
+  var EDIT_MODE = false;
+
+  function renderMCQEditor(q) {
+    var opts = effectiveOptions(q);
+    var ans = effectiveAnswer(q);
+    var multi = isMCQMulti(q);
+    var inputType = multi ? 'checkbox' : 'radio';
+
+    var ov = Overrides.get(q.id);
+    var hasOv = !!ov;
+
+    var html = '<div class="ae-edit-panel" id="ae-panel-' + q.id + '">';
+    html += '<div class="ae-edit-title">✏️ 编辑题目 — ' + escapeHtml(q.id);
+    html += ' <span class="tag tag-i">' + escapeHtml(chName(q.chapter)) + '</span>';
+    if (hasOv) html += ' <span class="tag tag-w">已修正</span>';
+    html += '</div>';
+
+    // ── 题目文本编辑 ──
+    html += '<div class="ae-edit-field">';
+    html += '<label class="ae-lbl">📝 题目：</label>';
+    html += '<textarea class="ae-textarea" id="ae-question-' + q.id + '" rows="3">' + escapeHtml(effectiveQuestion(q)) + '</textarea>';
+    html += '</div>';
+
+    // ── 选项文本编辑 ──
+    html += '<div class="ae-edit-field">';
+    html += '<label class="ae-lbl">📋 选项：</label>';
+    html += '<div class="ae-edit-opts-list">';
+    for (var i = 0; i < opts.length; i++) {
+      html += '<div class="ae-opt-row">';
+      html += '<span class="ae-opt-label">' + opts[i].label + '.</span>';
+      html += '<input type="text" class="ae-opt-text-input" id="ae-opt-' + q.id + '-' + i + '" value="' + escapeHtml(opts[i].text) + '">';
+      html += '</div>';
+    }
+    html += '</div>';
+    html += '</div>';
+
+    // ── 正确答案 ──
+    html += '<div class="ae-edit-field">';
+    html += '<label class="ae-lbl">✅ 正确答案：</label>';
+    html += '<div class="ae-edit-opts">';
+    for (var j = 0; j < opts.length; j++) {
+      var isSel = ans.indexOf(opts[j].label) >= 0;
+      html += '<label class="ae-opt' + (isSel ? ' ae-sel' : '') + '">';
+      html += '<input type="' + inputType + '" name="ae-ans-' + q.id + '" value="' + opts[j].label + '"' + (isSel ? ' checked' : '') + '>';
+      html += '<span class="ae-opt-l">' + opts[j].label + '</span>';
+      html += '</label>';
+    }
+    html += '</div>';
+    html += '</div>';
+
+    // ── 操作按钮 ──
+    html += '<div class="ae-edit-acts">';
+    html += '<button class="btn btn-sm btn-o" onclick="Editor.cancelEdit(\'' + q.id + '\')">取消</button>';
+    html += '<button class="btn btn-sm btn-p" onclick="Editor.saveMCQEdit(\'' + q.id + '\')">💾 保存修改</button>';
+    if (hasOv) {
+      html += '<button class="btn btn-sm btn-d" onclick="Editor.restoreOriginal(\'' + q.id + '\')">↩ 还原原始</button>';
+    }
+    html += '</div>';
+
+    html += '</div>';
+    return html;
+  }
+
+  function renderBQEditor(q) {
+    var ov = Overrides.get(q.id);
+    var hasOv = !!ov;
+
+    var html = '<div class="ae-edit-panel" id="ae-panel-' + q.id + '">';
+    html += '<div class="ae-edit-title">✏️ 编辑题目 — ' + escapeHtml(q.id);
+    html += ' <span class="tag tag-i">' + escapeHtml(chName(q.chapter)) + '</span>';
+    if (hasOv) html += ' <span class="tag tag-w">已修正</span>';
+    html += '</div>';
+
+    // ── 题目文本 ──
+    html += '<div class="ae-edit-field">';
+    html += '<label class="ae-lbl">📝 题目：</label>';
+    html += '<textarea class="ae-textarea" id="ae-question-' + q.id + '" rows="4">' + escapeHtml(effectiveQuestion(q)) + '</textarea>';
+    html += '</div>';
+
+    // ── 答案文本 ──
+    html += '<div class="ae-edit-field">';
+    html += '<label class="ae-lbl">✅ 答案：</label>';
+    html += '<textarea class="ae-textarea" id="ae-text-' + q.id + '" rows="5">' + escapeHtml(effectiveAnswer(q)) + '</textarea>';
+    html += '</div>';
+
+    html += '<div class="ae-edit-acts">';
+    html += '<button class="btn btn-sm btn-o" onclick="Editor.cancelEdit(\'' + q.id + '\')">取消</button>';
+    html += '<button class="btn btn-sm btn-p" onclick="Editor.saveBQEdit(\'' + q.id + '\')">💾 保存修改</button>';
+    if (hasOv) {
+      html += '<button class="btn btn-sm btn-d" onclick="Editor.restoreOriginal(\'' + q.id + '\')">↩ 还原原始</button>';
+    }
+    html += '</div>';
+
+    html += '</div>';
+    return html;
+  }
+
+  // ── DOM 注入编辑按钮（MCQ + BQ 题目卡片） ──
   function injectEditButtons() {
     if (!EDIT_MODE) {
-      // 移除所有编辑面板
-      document.querySelectorAll('.ae-edit-panel, .ae-edit-btn').forEach(function (el) { el.remove(); });
-      document.querySelectorAll('.ae-overridden-badge').forEach(function (el) { el.remove(); });
+      document.querySelectorAll('.ae-edit-panel, .ae-edit-btn, .ae-overridden-badge').forEach(function (el) { el.remove(); });
       return;
     }
 
-    // MCQ 答题页 — 在反馈区/选项区注入编辑按钮
-    var qCards = document.querySelectorAll('.q-card');
-    qCards.forEach(function (card) {
-      if (card.querySelector('.ae-edit-btn')) return; // 已注入
-
-      // 从 DOM 中推断题目 ID（通过收藏按钮的 onclick）
+    // MCQ 答题页
+    document.querySelectorAll('.q-card').forEach(function (card) {
+      if (card.querySelector('.ae-edit-btn')) return;
       var bmBtn = card.querySelector('.bm-btn');
       if (!bmBtn) return;
-      var onclick = bmBtn.getAttribute('onclick') || '';
-      var match = onclick.match(/App\.toggleBM\('([^']+)'\)/);
-      if (!match) return;
-      var qId = match[1];
-      var q = findQ(qId);
+      var m = (bmBtn.getAttribute('onclick') || '').match(/App\.toggleBM\('([^']+)'\)/);
+      if (!m) return;
+      var qId = m[1], q = findQ(qId);
       if (!q) return;
 
-      // 反馈区注入编辑按钮
-      var fb = card.querySelector('.fb');
-      if (fb && !fb.querySelector('.ae-edit-btn')) {
-        var btn = document.createElement('button');
-        btn.className = 'ae-edit-btn';
-        btn.innerHTML = Overrides.has(qId) ? '✏️🔶' : '✏️';
-        btn.title = '编辑答案';
-        btn.onclick = function (e) { e.stopPropagation(); Editor.openEditor(qId); };
-        fb.appendChild(btn);
-      }
-
-      // 若题目无反馈区（未作答），在题目头部注入
       var hd = card.querySelector('.q-hd');
-      if (!fb && hd && !hd.querySelector('.ae-edit-btn')) {
-        var btn2 = document.createElement('button');
+      var fb = card.querySelector('.fb');
+
+      var btn = document.createElement('button');
+      btn.className = 'ae-edit-btn';
+      btn.innerHTML = Overrides.has(qId) ? '✏️🔶' : '✏️';
+      btn.title = '编辑题目/选项/答案';
+      btn.onclick = function (e) { e.stopPropagation(); Editor.openEditor(qId); };
+
+      if (fb && !fb.querySelector('.ae-edit-btn')) {
+        fb.appendChild(btn);
+      } else if (hd && !hd.querySelector('.ae-edit-btn')) {
+        var btn2 = btn.cloneNode(true);
         btn2.className = 'ae-edit-btn ae-edit-btn-hd';
-        btn2.innerHTML = Overrides.has(qId) ? '✏️🔶' : '✏️';
-        btn2.title = '编辑答案';
         btn2.onclick = function (e) { e.stopPropagation(); Editor.openEditor(qId); };
         hd.appendChild(btn2);
       }
 
-      // 覆盖徽标
       if (Overrides.has(qId) && hd && !hd.querySelector('.ae-overridden-badge')) {
         var badge = document.createElement('span');
         badge.className = 'tag tag-w ae-overridden-badge';
@@ -242,37 +385,30 @@
       }
     });
 
-    // 大题列表页 — 在答案区注入编辑按钮
-    var bqCards = document.querySelectorAll('.bq-list-card');
-    bqCards.forEach(function (card) {
+    // 大题列表页
+    document.querySelectorAll('.bq-list-card').forEach(function (card) {
       if (card.querySelector('.ae-edit-btn')) return;
-
       var bmBtn = card.querySelector('.bm-btn');
       if (!bmBtn) return;
-      var onclick = bmBtn.getAttribute('onclick') || '';
-      var match = onclick.match(/App\.toggleBM\('([^']+)'\)/);
-      if (!match) return;
-      var qId = match[1];
-      var q = findQ(qId);
+      var m = (bmBtn.getAttribute('onclick') || '').match(/App\.toggleBM\('([^']+)'\)/);
+      if (!m) return;
+      var qId = m[1], q = findQ(qId);
       if (!q) return;
 
-      var ansArea = card.querySelector('.bq-list-a');
       var hd = card.querySelector('.bq-list-hd');
+      var ansArea = card.querySelector('.bq-list-a');
+
+      var btn = document.createElement('button');
+      btn.className = 'ae-edit-btn ae-edit-btn-bq';
+      btn.innerHTML = Overrides.has(qId) ? '✏️ 编辑 🔶' : '✏️ 编辑';
+      btn.title = '编辑题目/答案';
+      btn.onclick = function (e) { e.stopPropagation(); Editor.openEditor(qId); };
 
       if (ansArea && !ansArea.querySelector('.ae-edit-btn')) {
-        var btn = document.createElement('button');
-        btn.className = 'ae-edit-btn ae-edit-btn-bq';
-        btn.innerHTML = Overrides.has(qId) ? '✏️ 修改答案 🔶' : '✏️ 修改答案';
-        btn.title = '编辑答案';
-        btn.onclick = function (e) { e.stopPropagation(); Editor.openEditor(qId); };
         ansArea.appendChild(btn);
-      } else if (!ansArea && hd && !hd.querySelector('.ae-edit-btn')) {
-        var btn2 = document.createElement('button');
-        btn2.className = 'ae-edit-btn ae-edit-btn-hd';
-        btn2.innerHTML = Overrides.has(qId) ? '✏️🔶' : '✏️';
-        btn2.title = '编辑答案';
-        btn2.onclick = function (e) { e.stopPropagation(); Editor.openEditor(qId); };
-        hd.appendChild(btn2);
+      } else if (hd && !hd.querySelector('.ae-edit-btn')) {
+        btn.className = 'ae-edit-btn ae-edit-btn-hd';
+        hd.appendChild(btn);
       }
 
       if (Overrides.has(qId) && hd && !hd.querySelector('.ae-overridden-badge')) {
@@ -284,15 +420,13 @@
     });
   }
 
-  // MutationObserver：监听内容区变化，自动注入编辑控件
+  // MutationObserver
   var _observer = null;
   function startObserver() {
     if (_observer) return;
     var contentArea = document.getElementById('contentArea');
     if (!contentArea) return;
-    _observer = new MutationObserver(function () {
-      injectEditButtons();
-    });
+    _observer = new MutationObserver(function () { injectEditButtons(); });
     _observer.observe(contentArea, { childList: true, subtree: true });
   }
 
@@ -301,32 +435,32 @@
   // ═══════════════════════════════════════════════════════════
 
   function createSidebarUI() {
-    // 在侧边栏底部（主题按钮之上）插入编辑模式区
     var sidebar = document.getElementById('sidebar');
     var themeToggle = sidebar ? sidebar.querySelector('.theme-toggle') : null;
-    if (!sidebar || !themeToggle) {
-      // 还没渲染好，等 DOM 加载后再试
-      setTimeout(createSidebarUI, 200);
-      return;
-    }
-
-    // 避免重复插入
+    if (!sidebar || !themeToggle) { setTimeout(createSidebarUI, 200); return; }
     if (document.getElementById('aeSidebarSection')) return;
 
     var section = document.createElement('div');
     section.id = 'aeSidebarSection';
     section.className = 'ae-sidebar-section';
     section.innerHTML =
-      '<div class="ae-sidebar-lbl">🔧 答案管理</div>' +
+      '<div class="ae-sidebar-lbl">🔧 题库编辑</div>' +
       '<button class="ae-toggle-btn" id="aeToggleBtn" onclick="Editor.toggleEditMode()">' +
-        '<span>✏️</span> 编辑模式 <span class="ae-toggle-state" id="aeToggleState">关</span>' +
+        '<span>✏️ 编辑题目/选项/答案</span> <span class="ae-toggle-state" id="aeToggleState">关</span>' +
       '</button>' +
-      '<button class="ae-export-btn" id="aeExportBtn" onclick="Editor.exportFile()" title="导出修正后的 questions.js">' +
-        '📥 导出修正文件' +
+      '<button class="ae-export-btn" id="aeExportJSBtn" onclick="Editor.exportJS()" title="导出完整 questions.js">' +
+        '📥 导出新版 questions.js' +
+      '</button>' +
+      '<button class="ae-export-btn" id="aeExportManifestBtn" onclick="Editor.exportManifest()" title="导出编辑清单供 Python 应用">' +
+        '📋 导出编辑清单 JSON' +
       '</button>' +
       '<div class="ae-count" id="aeCount" style="display:none">' +
-        '已修正 <strong id="aeCountNum">0</strong> 题 · ' +
+        '已修改 <strong id="aeCountNum">0</strong> 题 · ' +
         '<a href="#" onclick="Editor.clearAllOverrides();return false" style="color:var(--rd);font-size:.72rem">清除全部</a>' +
+      '</div>' +
+      '<div class="ae-hint" style="font-size:.68rem;color:var(--t2);margin-top:4px;line-height:1.4">' +
+        '💡 点击题目旁的 ✏️ 可编辑题目文本、选项内容和正确答案。<br>' +
+        '导出 JS → 替换原文件 | 导出 JSON → Python 自动应用' +
       '</div>';
 
     sidebar.insertBefore(section, themeToggle);
@@ -339,20 +473,14 @@
     var countEl = document.getElementById('aeCount');
     var countNum = document.getElementById('aeCountNum');
 
-    if (toggleBtn) {
-      toggleBtn.classList.toggle('ae-active', EDIT_MODE);
-    }
+    if (toggleBtn) toggleBtn.classList.toggle('ae-active', EDIT_MODE);
     if (toggleState) {
       toggleState.textContent = EDIT_MODE ? '开' : '关';
-      toggleState.style.color = EDIT_MODE ? 'var(--gr)' : 'var(--t3)';
+      toggleState.style.color = EDIT_MODE ? 'var(--gr)' : 'var(--t2)';
     }
     var cnt = Overrides.count();
-    if (countEl) {
-      countEl.style.display = cnt > 0 ? 'block' : 'none';
-    }
-    if (countNum) {
-      countNum.textContent = cnt;
-    }
+    if (countEl) countEl.style.display = cnt > 0 ? 'block' : 'none';
+    if (countNum) countNum.textContent = cnt;
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -363,31 +491,21 @@
     var q = findQ(qId);
     if (!q) return;
 
-    // 移除已有弹窗
     document.querySelectorAll('.ae-modal-overlay').forEach(function (el) { el.remove(); });
-    // 移除行内编辑面板
     document.querySelectorAll('.ae-edit-panel').forEach(function (el) { el.remove(); });
 
     var overlay = document.createElement('div');
     overlay.className = 'ae-modal-overlay';
-    overlay.onclick = function (e) {
-      if (e.target === overlay) closeEditor();
-    };
+    overlay.onclick = function (e) { if (e.target === overlay) closeEditor(); };
 
     var dlg = document.createElement('div');
     dlg.className = 'ae-modal-dlg';
     dlg.onclick = function (e) { e.stopPropagation(); };
-
-    if (isMCQ(q)) {
-      dlg.innerHTML = renderMCQEditor(q);
-    } else {
-      dlg.innerHTML = renderBQEditor(q);
-    }
+    dlg.innerHTML = isMCQ(q) ? renderMCQEditor(q) : renderBQEditor(q);
 
     overlay.appendChild(dlg);
     document.body.appendChild(overlay);
 
-    // 动画
     requestAnimationFrame(function () {
       overlay.classList.add('ae-show');
       dlg.classList.add('ae-show');
@@ -401,116 +519,110 @@
     });
   }
 
-  // 保存 MCQ 答案
+  // ── 保存 MCQ 编辑 ──
   function saveMCQEdit(qId) {
     var q = findQ(qId);
     if (!q) return;
 
-    var radios = document.getElementsByName('ae-ans-' + qId);
-    var selected = [];
-    for (var i = 0; i < radios.length; i++) {
-      if (radios[i].checked) selected.push(radios[i].value);
-    }
-    if (selected.length === 0) {
-      alert('请至少选择一个答案');
-      return;
+    // 收集题目文本
+    var qTextEl = document.getElementById('ae-question-' + qId);
+    var newQuestion = qTextEl ? qTextEl.value.trim() : '';
+
+    // 收集选项文本
+    var newOpts = [];
+    var opts = effectiveOptions(q);
+    for (var i = 0; i < opts.length; i++) {
+      var optInput = document.getElementById('ae-opt-' + qId + '-' + i);
+      newOpts.push({
+        label: opts[i].label,
+        text: optInput ? optInput.value.trim() : opts[i].text
+      });
     }
 
-    Overrides.set(qId, selected, q);
+    // 收集答案
+    var radios = document.getElementsByName('ae-ans-' + qId);
+    var selected = [];
+    for (var j = 0; j < radios.length; j++) {
+      if (radios[j].checked) selected.push(radios[j].value);
+    }
+
+    if (!newQuestion) { alert('题目不能为空'); return; }
+    if (selected.length === 0) { alert('请至少选择一个正确答案'); return; }
+    // 检查选项非空
+    for (var k = 0; k < newOpts.length; k++) {
+      if (!newOpts[k].text) { alert('选项 ' + newOpts[k].label + ' 不能为空'); return; }
+    }
+
+    var patch = { question: newQuestion, options: newOpts, answer: selected };
+    Overrides.set(qId, patch, q);
     closeEditor();
     updateSidebarState();
 
-    // 重新判定用户回答：如果答案修正后用户原回答变正确/错误，自动更新错题本
-    if (typeof App !== 'undefined' && typeof App.reevaluate === 'function') {
-      try { App.reevaluate(qId); } catch (e) {}
-    } else if (typeof window.App !== 'undefined' && typeof window.App.reevaluate === 'function') {
-      try { window.App.reevaluate(qId); } catch (e) {}
-    } else {
-      // 回退：仅触发渲染
-      if (typeof App !== 'undefined' && typeof App.render === 'function') {
-        try { App.render(); } catch (e) {}
-      } else if (typeof window.App !== 'undefined' && typeof window.App.render === 'function') {
-        try { window.App.render(); } catch (e) {}
-      }
-    }
-
+    reEvalAndRender(qId);
     try { injectEditButtons(); } catch (e) {}
+    toast('已保存：题目、选项和答案 (' + qId + ')', 'success');
   }
 
-  // 保存大题答案
+  // ── 保存大题编辑 ──
   function saveBQEdit(qId) {
     var q = findQ(qId);
     if (!q) return;
 
-    var textarea = document.getElementById('ae-text-' + qId);
-    if (!textarea) return;
+    var qTextEl = document.getElementById('ae-question-' + qId);
+    var ansTextEl = document.getElementById('ae-text-' + qId);
+    var newQuestion = qTextEl ? qTextEl.value.trim() : '';
+    var newAnswer = ansTextEl ? ansTextEl.value.trim() : '';
 
-    var newAns = textarea.value.trim();
-    if (!newAns) {
-      alert('答案不能为空');
-      return;
-    }
+    if (!newQuestion) { alert('题目不能为空'); return; }
+    if (!newAnswer) { alert('答案不能为空'); return; }
 
-    Overrides.set(qId, newAns, q);
+    var patch = { question: newQuestion, answer: newAnswer };
+    Overrides.set(qId, patch, q);
     closeEditor();
     updateSidebarState();
 
-    // 大题无自动判分，仅触发渲染刷新显示
-    if (typeof App !== 'undefined' && typeof App.render === 'function') {
-      try { App.render(); } catch (e) {}
-    } else if (typeof window.App !== 'undefined' && typeof window.App.render === 'function') {
-      try { window.App.render(); } catch (e) {}
-    }
-
+    // 大题无自动判分，仅触发渲染
+    tryRender();
     try { injectEditButtons(); } catch (e) {}
+    toast('已保存：题目和答案 (' + qId + ')', 'success');
   }
 
-  function cancelEdit(qId) {
-    closeEditor();
-  }
+  function cancelEdit(qId) { closeEditor(); }
 
   function restoreOriginal(qId) {
     var q = findQ(qId);
     if (!q) return;
-    if (!confirm('确定还原「' + q.id + '」的原始答案？')) return;
+    if (!confirm('确定还原「' + q.id + '」的原始题目、选项和答案？此操作不可恢复。')) return;
     Overrides.remove(qId, q);
     closeEditor();
     updateSidebarState();
 
-    // 重判用户回答（答案还原后可能需要更新错题本）
-    if (typeof App !== 'undefined' && typeof App.reevaluate === 'function') {
-      try { App.reevaluate(qId); } catch (e) {}
-    } else if (typeof window.App !== 'undefined' && typeof window.App.reevaluate === 'function') {
-      try { window.App.reevaluate(qId); } catch (e) {}
-    } else {
-      if (typeof App !== 'undefined' && typeof App.render === 'function') {
-        try { App.render(); } catch (e) {}
-      } else if (typeof window.App !== 'undefined' && typeof window.App.render === 'function') {
-        try { window.App.render(); } catch (e) {}
-      }
-    }
+    reEvalAndRender(qId);
+    toast('已还原原始数据 (' + qId + ')', 'info');
   }
 
   function clearAllOverrides() {
-    if (!confirm('确定清除全部 ' + Overrides.count() + ' 条答案修正？此操作不可恢复。')) return;
-
-    var allQs = [].concat(
-      (typeof QUESTIONS !== 'undefined' ? QUESTIONS : []),
-      (typeof BIG_QUESTIONS !== 'undefined' ? BIG_QUESTIONS : [])
-    );
-    var ids = Object.keys(Overrides._data);
-    ids.forEach(function (qId) {
-      var q = allQs.find(function (x) { return x.id === qId; });
-      if (q && Overrides._originals[qId]) {
-        q.answer = JSON.parse(JSON.stringify(Overrides._originals[qId]));
-        q._overridden = false;
-      }
-    });
-    Overrides._data = {};
-    Overrides._originals = {};
-    saveJ(LS_KEY, {});
+    var cnt = Overrides.count();
+    if (cnt === 0) return;
+    if (!confirm('确定清除全部 ' + cnt + ' 道题目的修改？此操作不可恢复。')) return;
+    Overrides.clearAll();
     updateSidebarState();
+    tryRender();
+    toast('已清除全部 ' + cnt + ' 条修改', 'warning');
+  }
 
+  // 辅助：重判 + 重渲染
+  function reEvalAndRender(qId) {
+    if (typeof App !== 'undefined' && typeof App.reevaluate === 'function') {
+      try { App.reevaluate(qId); } catch (e) { tryRender(); }
+    } else if (typeof window.App !== 'undefined' && typeof window.App.reevaluate === 'function') {
+      try { window.App.reevaluate(qId); } catch (e) { tryRender(); }
+    } else {
+      tryRender();
+    }
+  }
+
+  function tryRender() {
     if (typeof App !== 'undefined' && typeof App.render === 'function') {
       try { App.render(); } catch (e) {}
     } else if (typeof window.App !== 'undefined' && typeof window.App.render === 'function') {
@@ -518,64 +630,72 @@
     }
   }
 
-  // ═══════════════════════════════════════════════════════════
-  //  第三层：导出 / 下载修正后的 questions.js
-  // ═══════════════════════════════════════════════════════════
-
-  function exportFile() {
-    var cnt = Overrides.count();
-    if (cnt === 0) {
-      alert('暂无答案修正，无需导出。');
-      return;
-    }
-
-    // 尝试使用 File System Access API（Chrome/Edge 支持）
-    if (typeof window.showSaveFilePicker === 'function') {
-      exportViaFileSystemAPI(cnt);
-    } else {
-      exportViaDownload(cnt);
+  function toast(msg, type) {
+    if (typeof App !== 'undefined' && typeof App.toast === 'function') {
+      try { App.toast(msg, type || 'info'); } catch (e) {}
+    } else if (typeof window.App !== 'undefined' && typeof window.App.toast === 'function') {
+      try { window.App.toast(msg, type || 'info'); } catch (e) {}
     }
   }
 
-  function generateCorrectedJS() {
-    var lines = [];
+  // ═══════════════════════════════════════════════════════════
+  //  第三层：持久化 — 导出
+  // ═══════════════════════════════════════════════════════════
 
-    // 文件头
-    lines.push('// Auto-generated quiz data - OS Exam Questions');
-    lines.push('// ⚠️ 已应用 ' + Overrides.count() + ' 条答案修正');
-    lines.push('// 修正日期：' + new Date().toISOString().split('T')[0]);
+  // 构建导出对象（应用全部覆盖后的最终版本）
+  function buildExportObj(q) {
+    var obj = {};
+    obj.id = q.id;
+    obj.chapter = q.chapter;
+
+    // type: MCQ 优先用 _origType
+    if (q._origType && (q._origType === 'choice' || q._origType === '判断')) {
+      obj.type = q._origType;
+    } else {
+      obj.type = q.type;
+    }
+
+    if (q.number !== undefined) obj.number = q.number;
+    obj.question = q.question;  // 已应用覆盖
+
+    if (q.options && q.options.length > 0) {
+      obj.options = q.options.map(function (o) {
+        return { label: o.label, text: o.text };
+      });
+    }
+
+    // 答案：MCQ → 字符串，大题 → 字符串
+    if (q.options && q.options.length > 0) {
+      obj.answer = Array.isArray(q.answer) ? q.answer.join('') : String(q.answer);
+    } else {
+      obj.answer = Array.isArray(q.answer) ? q.answer.join(', ') : String(q.answer);
+    }
+
+    return obj;
+  }
+
+  // 生成完整 questions.js 内容
+  function generateQuestionsJS() {
+    var lines = [];
+    var cnt = Overrides.count();
+    var ts = new Date().toISOString().split('T')[0];
+
+    lines.push('// 计算机组成原理 — 选择题题库');
+    lines.push('// 生成日期：' + ts + (cnt > 0 ? ' | 已应用 ' + cnt + ' 条编辑修正' : ''));
     lines.push('');
 
-    // CHAPTER_NAMES
     if (typeof CHAPTER_NAMES !== 'undefined') {
       lines.push('var CHAPTER_NAMES = ' + JSON.stringify(CHAPTER_NAMES, null, 2) + ';');
       lines.push('');
     }
 
-    // QUESTIONS
     if (typeof QUESTIONS !== 'undefined' && QUESTIONS.length > 0) {
       lines.push('var QUESTIONS = [');
       QUESTIONS.forEach(function (q, i) {
         var obj = buildExportObj(q);
         var json = JSON.stringify(obj, null, 2);
-        // 将每行增加 2 空格缩进
         var indented = json.split('\n').map(function (line) { return '  ' + line; }).join('\n');
-        var comma = (i < QUESTIONS.length - 1) ? ',' : '';
-        lines.push(indented + comma);
-      });
-      lines.push('];');
-      lines.push('');
-    }
-
-    // BIG_QUESTIONS
-    if (typeof BIG_QUESTIONS !== 'undefined' && BIG_QUESTIONS.length > 0) {
-      lines.push('var BIG_QUESTIONS = [');
-      BIG_QUESTIONS.forEach(function (q, i) {
-        var obj = buildExportObj(q);
-        var json = JSON.stringify(obj, null, 2);
-        var indented = json.split('\n').map(function (line) { return '  ' + line; }).join('\n');
-        var comma = (i < BIG_QUESTIONS.length - 1) ? ',' : '';
-        lines.push(indented + comma);
+        lines.push(indented + (i < QUESTIONS.length - 1 ? ',' : ''));
       });
       lines.push('];');
       lines.push('');
@@ -584,97 +704,94 @@
     return lines.join('\n');
   }
 
-  function buildExportObj(q) {
-    var obj = {};
+  // 生成编辑清单 JSON（供 Python 脚本使用）
+  function generateManifestJSON() {
+    var manifest = {
+      _meta: {
+        generated: new Date().toISOString(),
+        sourceFile: 'js/questions.js',
+        totalEdits: Overrides.count(),
+        instructions: '将此文件放在 questions.js 同目录，运行: python apply_edits.py --apply edit_manifest.json'
+      },
+      edits: {}
+    };
 
-    // 保持与原始格式一致的字段顺序和内容
-    obj.id = q.id;
-    obj.chapter = q.chapter;
+    var ids = Object.keys(Overrides._data);
+    ids.forEach(function (qId) {
+      var ov = Overrides._data[qId];
+      var q = findQ(qId);
+      var entry = {};
 
-    // type: 对于 MCQ 用 _origType，判断题也用 _origType
-    if (q._origType && (q._origType === 'choice' || q._origType === '判断')) {
-      obj.type = q._origType;
-    } else {
-      obj.type = q.type;
-    }
+      if (ov.question !== undefined) entry.question = ov.question;
+      if (ov.options !== undefined) entry.options = ov.options;
+      if (ov.answer !== undefined) {
+        entry.answer = Array.isArray(ov.answer) ? ov.answer : String(ov.answer);
+      }
 
-    if (q.number !== undefined) obj.number = q.number;
-    obj.question = q.question;
+      // 附加元信息
+      entry._chapter = q ? q.chapter : '?';
+      entry._number = q ? q.number : 0;
+      entry._origType = q ? (q._origType || q.type) : '?';
 
-    if (q.options && q.options.length > 0) {
-      obj.options = q.options.map(function (o) {
-        return { label: o.label, text: o.text };
-      });
-    }
+      manifest.edits[qId] = entry;
+    });
 
-    // 答案：MCQ 转回字符串格式，大题保持字符串
-    if (q.options && q.options.length > 0) {
-      // MCQ：数组 → 字符串（如 ["C"] → "C", ["A","B"] → "AB"）
-      obj.answer = Array.isArray(q.answer) ? q.answer.join('') : String(q.answer);
-    } else {
-      // 大题：保持字符串
-      obj.answer = Array.isArray(q.answer) ? q.answer.join(', ') : String(q.answer);
-    }
-
-    return obj;
+    return JSON.stringify(manifest, null, 2);
   }
 
-  // 方式 A：通过浏览器下载
-  function exportViaDownload(cnt) {
-    var content = generateCorrectedJS();
-    var blob = new Blob([content], { type: 'application/javascript;charset=utf-8' });
-    var url = URL.createObjectURL(blob);
+  // 导出完整 questions.js
+  function exportJS() {
+    var cnt = Overrides.count();
+    var content = generateQuestionsJS();
+    var fname = 'questions' + (cnt > 0 ? '_corrected' : '') + '.js';
+    downloadFile(content, fname, 'application/javascript;charset=utf-8');
+    if (cnt > 0) {
+      toast('已导出新版 questions.js（含 ' + cnt + ' 条修改）。请用它替换 js/questions.js', 'success');
+    } else {
+      toast('已导出 questions.js（无修改）', 'info');
+    }
+  }
 
-    var a = document.createElement('a');
-    a.href = url;
-    // 使用时间戳防止覆盖
+  // 导出编辑清单 JSON
+  function exportManifest() {
+    var cnt = Overrides.count();
+    if (cnt === 0) { alert('暂无修改，无需导出编辑清单。'); return; }
+    var content = generateManifestJSON();
     var ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    a.download = 'questions_corrected_' + ts + '.js';
-    document.body.appendChild(a);
-    a.click();
+    downloadFile(content, 'edit_manifest_' + ts + '.json', 'application/json;charset=utf-8');
+    toast('已导出编辑清单 JSON（' + cnt + ' 条修改）。运行: python apply_edits.py --apply <此文件>', 'success');
+  }
+
+  function downloadFile(content, fname, mimeType) {
+    // 优先使用 File System Access API
+    if (typeof window.showSaveFilePicker === 'function') {
+      (async function () {
+        try {
+          var handle = await window.showSaveFilePicker({
+            suggestedName: fname,
+            types: [{ description: 'File', accept: { [mimeType]: ['.js', '.json'] } }]
+          });
+          var writable = await handle.createWritable();
+          await writable.write(content);
+          await writable.close();
+          toast('✅ 文件已保存: ' + fname, 'success');
+        } catch (e) {
+          if (e.name !== 'AbortError') downloadViaAnchor(content, fname, mimeType);
+        }
+      })();
+    } else {
+      downloadViaAnchor(content, fname, mimeType);
+    }
+  }
+
+  function downloadViaAnchor(content, fname, mimeType) {
+    var blob = new Blob([content], { type: mimeType });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = fname;
+    document.body.appendChild(a); a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-
-    // 显示提示
-    var toastMsg = '已下载修正文件（' + cnt + ' 条修改）。请用该文件替换 js/questions.js';
-    if (typeof App !== 'undefined' && typeof App.toast === 'function') {
-      App.toast(toastMsg, 'success');
-    } else {
-      alert(toastMsg);
-    }
-  }
-
-  // 方式 B：通过 File System Access API 直接写入
-  async function exportViaFileSystemAPI(cnt) {
-    try {
-      var content = generateCorrectedJS();
-
-      // 让用户选择保存路径（默认指向 questions.js）
-      var handle = await window.showSaveFilePicker({
-        suggestedName: 'questions.js',
-        types: [{
-          description: 'JavaScript Files',
-          accept: { 'application/javascript': ['.js'] }
-        }]
-      });
-
-      var writable = await handle.createWritable();
-      await writable.write(content);
-      await writable.close();
-
-      var msg = '✅ 已成功写入文件（' + cnt + ' 条修改）';
-      if (typeof App !== 'undefined' && typeof App.toast === 'function') {
-        App.toast(msg, 'success');
-      } else {
-        alert(msg);
-      }
-    } catch (e) {
-      if (e.name !== 'AbortError') {
-        // 用户取消不算错误，其他错误回退到下载方式
-        console.error('File System API failed:', e);
-        exportViaDownload(cnt);
-      }
-    }
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -682,59 +799,32 @@
   // ═══════════════════════════════════════════════════════════
 
   var Editor = {
-    // 开关编辑模式
     toggleEditMode: function () {
       EDIT_MODE = !EDIT_MODE;
       updateSidebarState();
       injectEditButtons();
-
-      var msg = EDIT_MODE ? '编辑模式已开启 — 点击 ✏️ 按钮修改答案' : '编辑模式已关闭';
-      if (typeof App !== 'undefined' && typeof App.toast === 'function') {
-        App.toast(msg, 'info');
-      }
+      toast(EDIT_MODE ? '编辑模式已开启 — 点击 ✏️ 编辑题目/选项/答案' : '编辑模式已关闭', 'info');
     },
 
-    // 开启编辑器
-    openEditor: function (qId) {
-      openEditor(qId);
-    },
-
-    // 保存（由 DOM 按钮调用）
-    saveMCQEdit: function (qId) {
-      saveMCQEdit(qId);
-    },
-    saveBQEdit: function (qId) {
-      saveBQEdit(qId);
-    },
-    cancelEdit: function (qId) {
-      cancelEdit(qId);
-    },
-    restoreOriginal: function (qId) {
-      restoreOriginal(qId);
-    },
+    openEditor: function (qId) { openEditor(qId); },
+    saveMCQEdit: function (qId) { saveMCQEdit(qId); },
+    saveBQEdit: function (qId) { saveBQEdit(qId); },
+    cancelEdit: function (qId) { cancelEdit(qId); },
+    restoreOriginal: function (qId) { restoreOriginal(qId); },
 
     // 导出
-    exportFile: function () {
-      exportFile();
-    },
+    exportJS: function () { exportJS(); },
+    exportManifest: function () { exportManifest(); },
+    // 兼容旧接口
+    exportFile: function () { exportJS(); },
 
-    // 清除全部
-    clearAllOverrides: function () {
-      clearAllOverrides();
-    },
+    clearAllOverrides: function () { clearAllOverrides(); },
 
     // 状态查询
-    isEditMode: function () {
-      return EDIT_MODE;
-    },
-    getOverrideCount: function () {
-      return Overrides.count();
-    },
-    hasOverride: function (qId) {
-      return Overrides.has(qId);
-    },
+    isEditMode: function () { return EDIT_MODE; },
+    getOverrideCount: function () { return Overrides.count(); },
+    hasOverride: function (qId) { return Overrides.has(qId); },
 
-    // 调试
     _overrides: Overrides
   };
 
@@ -743,10 +833,8 @@
   // ═══════════════════════════════════════════════════════════
 
   function init() {
-    // 第一层：应用覆盖到内存（在 app.js 的 IIFE 执行之后、render 之前）
     applyAllOverrides();
 
-    // 第二层：设置 UI
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', function () {
         createSidebarUI();
@@ -760,10 +848,7 @@
     }
   }
 
-  // 挂载全局
   window.Editor = Editor;
-
-  // 启动
   init();
 
 })();
