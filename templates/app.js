@@ -23,7 +23,17 @@
         if (q.answer !== undefined && !Array.isArray(q.answer)) {
           q.answer = String(q.answer).split('').filter(function (c) { return c.trim(); });
         }
-        q.type = 'single';
+        // 保留多选类型，单选/判断统一为 single
+        if (q.type !== 'multiple') {
+          q.type = 'single';
+        }
+        // 处理 QUESTIONS 中的判断类型：若无 √/× 选项则自动补全
+        if (q._origType === '判断' && (!q.options || q.options.length === 0)) {
+          q.options = [
+            { label: '√', text: '正确' },
+            { label: '×', text: '错误' }
+          ];
+        }
       }
     }
     // 处理 BIG_QUESTIONS：将 判断 类型迁移到 QUESTIONS（带 √/× 选项）
@@ -199,19 +209,21 @@
   }
 
   // ── 题型配置 ──
+  // 从第一性原理：扫描源数据确定实际题型，空题型自动隐藏
   var TYPES = [
     { mode: 'mcq',   label: '选择题', icon: '✏️', bqType: null },
+    { mode: 'tf',    label: '判断题', icon: '⚖️', bqType: null },
     { mode: 'fill',  label: '填空题', icon: '📝', bqType: '填空' },
     { mode: 'essay', label: '简答题', icon: '📄', bqType: '简答' },
     { mode: 'calc',  label: '计算题', icon: '🔢', bqType: '计算' }
   ];
 
   var MODE_LABELS = {
-    mcq: '选择题', fill: '填空题', essay: '简答题', calc: '计算题',
+    mcq: '选择题', tf: '判断题', fill: '填空题', essay: '简答题', calc: '计算题',
     random: '随机抽题', wrong: '错题本'
   };
 
-  var _typeMap = { mcq: null, fill: '填空', essay: '简答', calc: '计算' };
+  var _typeMap = { mcq: null, tf: null, fill: '填空', essay: '简答', calc: '计算' };
 
   // ── 工具 ──
   function getAll() { return QUESTIONS || []; }
@@ -219,6 +231,20 @@
 
   function getBQByType(type) {
     return getBQ().filter(function (q) { return q.type === type; });
+  }
+
+  // 选择题/判断题数据源分离：mcq = 非判断，tf = 判断
+  function mcqFiltered(mode) {
+    if (mode === 'tf') return getAll().filter(function (q) { return q._origType === '判断'; });
+    return getAll().filter(function (q) { return q._origType !== '判断'; });
+  }
+
+  // 检测某题型是否有题目（从第一性原理出发）
+  function typeHasQuestions(mode) {
+    if (mode === 'mcq') return mcqFiltered('mcq').length > 0;
+    if (mode === 'tf') return mcqFiltered('tf').length > 0;
+    var bqType = _typeMap[mode];
+    return bqType ? getBQByType(bqType).length > 0 : false;
   }
 
   function shuffle(a) {
@@ -249,15 +275,15 @@
   }
 
   function isTypeMode(m) {
-    return m === 'mcq' || m === 'fill' || m === 'essay' || m === 'calc';
+    return m === 'mcq' || m === 'tf' || m === 'fill' || m === 'essay' || m === 'calc';
   }
 
   // ── 数据源 ──
   function getQs() {
     if (S._bmQs) return S._bmQs;
-    if (S.mode === 'mcq') {
-      if (!S.chapter || S.chapter === 'all') return getAll();
-      return getAll().filter(function (q) { return q.chapter === S.chapter; });
+    if (S.mode === 'mcq' || S.mode === 'tf') {
+      var pool = (!S.chapter || S.chapter === 'all') ? mcqFiltered(S.mode) : mcqFiltered(S.mode).filter(function (q) { return q.chapter === S.chapter; });
+      return pool;
     }
     if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') {
       var type = _typeMap[S.mode];
@@ -279,8 +305,8 @@
 
   // ── 获取指定章节的题目（跨章节导航用）──
   function getQsForChapter(ch) {
-    if (S.mode === 'mcq') {
-      return getAll().filter(function (q) { return q.chapter === ch; });
+    if (S.mode === 'mcq' || S.mode === 'tf') {
+      return mcqFiltered(S.mode).filter(function (q) { return q.chapter === ch; });
     }
     if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') {
       var type = _typeMap[S.mode];
@@ -326,13 +352,14 @@
   
 
   // ── 进度统计（按题型+章节） ──
-  function mcqStats(ch) {
-    var qs = ch === 'all' ? getAll() : getAll().filter(function (q) { return q.chapter === ch; });
+  function mcqStats(ch, mode) {
+    mode = mode || S.mode;
+    var qs = ch === 'all' ? mcqFiltered(mode) : mcqFiltered(mode).filter(function (q) { return q.chapter === ch; });
     var a = 0, c = 0;
     qs.forEach(function (q) {
       if (S.answers[q.id]) { a++; if (S.results[q.id]) c++; }
     });
-    return { total: qs.length, answered: a, correct: c };
+    return { total: qs.length, answered: a, correct: c, wrong: a - c };
   }
 
   function bqTypeStats(type, ch) {
@@ -351,26 +378,30 @@
     if (S.mode === 'fill') return bqTypeStats('填空', ch);
     if (S.mode === 'essay') return bqTypeStats('简答', ch);
     if (S.mode === 'calc') return bqTypeStats('计算', ch);
-    return mcqStats(ch);
+    if (S.mode === 'tf') return mcqStats(ch, 'tf');
+    return mcqStats(ch, 'mcq');
   }
 
   function currentStats() {
     if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') {
       return bqTypeStats(_typeMap[S.mode], 'all');
     }
+    var mode = S.mode === 'tf' ? 'tf' : 'mcq';
     var t = 0, a = 0, c = 0;
     CHAPTERS.forEach(function (id) {
-      var s = mcqStats(id);
+      var s = mcqStats(id, mode);
       t += s.total; a += s.answered; c += s.correct;
     });
     return { total: t, answered: a, correct: c, wrong: a - c };
   }
 
   function allStats() {
+    // 选择题+判断题合并统计（用于首页总览）
     var t = 0, a = 0, c = 0;
     CHAPTERS.forEach(function (id) {
-      var s = mcqStats(id);
-      t += s.total; a += s.answered; c += s.correct;
+      var s = mcqStats(id, 'mcq');
+      var stf = mcqStats(id, 'tf');
+      t += s.total + stf.total; a += s.answered + stf.answered; c += s.correct + stf.correct;
     });
     var f = bqTypeStats('填空', 'all');
     var e = bqTypeStats('简答', 'all');
@@ -395,8 +426,10 @@
 
   function typeSummary(mode) {
     if (mode === 'mcq') {
-      var s = mcqStats('all');
-      return s.total + '题' + (s.answered ? ' · ' + s.answered + '/' + s.total : '');
+      return mcqStats('all', 'mcq').total + '题' + (mcqStats('all', 'mcq').answered ? ' · ' + mcqStats('all', 'mcq').answered + '/' + mcqStats('all', 'mcq').total : '');
+    }
+    if (mode === 'tf') {
+      return mcqStats('all', 'tf').total + '题' + (mcqStats('all', 'tf').answered ? ' · ' + mcqStats('all', 'tf').answered + '/' + mcqStats('all', 'tf').total : '');
     }
     var s = bqTypeStats(_typeMap[mode], 'all');
     return s.total + '题' + (s.memorized ? ' · ' + s.memorized + '/' + s.total : '');
@@ -577,24 +610,34 @@
   function renderDashboard() {
     var all = allStats();
     var hasBQ = getBQ().length > 0;
+    var tfCount = mcqFiltered('tf').length;
+    var mcqCount = mcqFiltered('mcq').length;
+    var fillCount = getBQByType('填空').length;
+    var essayCount = getBQByType('简答').length;
+    var calcCount = getBQByType('计算').length;
     var html = '<div class="dash">';
 
     html += '<div class="dash-hero">';
     html += '<div class="dash-hero-icon">📚</div><h2>题库自测系统</h2>';
-    html += '<p>选择 ' + getAll().length + ' 道 · 填空 ' + getBQByType('填空').length + ' 道 · 简答 '
-      + getBQByType('简答').length + ' 道 · 计算 ' + getBQByType('计算').length + ' 道</p>';
+    html += '<p>选择 ' + mcqCount + ' 道 · 判断 ' + tfCount + ' 道 · 填空 ' + fillCount
+      + ' 道 · 简答 ' + essayCount + ' 道' + (calcCount ? ' · 计算 ' + calcCount + ' 道' : '') + '</p>';
     html += '<div class="dash-hero-stats">';
-    html += '<div class="dash-hero-s"><strong>' + all.total + '</strong><span>MCQ总题</span></div>';
+    html += '<div class="dash-hero-s"><strong>' + (mcqCount + tfCount) + '</strong><span>客观题</span></div>';
     html += '<div class="dash-hero-s"><strong>' + all.answered + '</strong><span>已答</span></div>';
     html += '<div class="dash-hero-s"><strong>' + all.correct + '</strong><span>正确</span></div>';
     html += '<div class="dash-hero-s"><strong>' + S.wrongSet.size + '</strong><span>错题</span></div>';
     html += '</div></div>';
 
+    // 过滤：仅显示有题目的题型
+    var availTypes = TYPES.filter(function (t) { return typeHasQuestions(t.mode); });
+
     html += '<h3 class="sec-title">📖 按题型练习</h3><div class="dash-grid" style="grid-template-columns:repeat(auto-fill,minmax(160px,1fr))">';
-    TYPES.forEach(function (t) {
-      var s = t.mode === 'mcq' ? mcqStats('all') : bqTypeStats(t.bqType, 'all');
-      var pct = t.mode === 'mcq' ? Math.round(s.answered / Math.max(s.total, 1) * 100) : Math.round(s.memorized / Math.max(s.total, 1) * 100);
-      var label = t.mode === 'mcq' ? '已答 ' + s.answered + '/' + s.total : '已记 ' + s.memorized + '/' + s.total;
+    availTypes.forEach(function (t) {
+      var s = (t.mode === 'mcq') ? mcqStats('all', 'mcq')
+            : (t.mode === 'tf') ? mcqStats('all', 'tf')
+            : bqTypeStats(t.bqType, 'all');
+      var pct = (t.mode === 'mcq' || t.mode === 'tf') ? Math.round(s.answered / Math.max(s.total, 1) * 100) : Math.round(s.memorized / Math.max(s.total, 1) * 100);
+      var label = (t.mode === 'mcq' || t.mode === 'tf') ? '已答 ' + s.answered + '/' + s.total : '已记 ' + s.memorized + '/' + s.total;
       html += '<div class="dash-card mode-card" onclick="App.startType(\'' + t.mode + '\')">';
       html += '<div style="font-size:2rem">' + t.icon + '</div><div>' + t.label + '</div>';
       html += '<div style="font-size:.75rem;color:var(--t2);margin-top:4px">' + s.total + ' 题</div>';
@@ -624,7 +667,7 @@
 
     html += '<h3 class="sec-title">🚀 快速开始</h3>';
     html += '<div class="dash-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">';
-    TYPES.forEach(function (t) {
+    availTypes.forEach(function (t) {
       html += '<div class="dash-card mode-card" onclick="App.startType(\'' + t.mode + '\')">'
         + '<div style="font-size:2rem">' + t.icon + '</div><div>' + t.label + '</div></div>';
     });
@@ -635,13 +678,15 @@
 
     if (hasBQ) {
       html += '<h3 class="sec-title">📋 各题型进度</h3>';
-      TYPES.forEach(function (t) {
-        var s = t.mode === 'mcq' ? mcqStats('all') : bqTypeStats(t.bqType, 'all');
+      availTypes.forEach(function (t) {
+        var s = (t.mode === 'mcq') ? mcqStats('all', 'mcq')
+              : (t.mode === 'tf') ? mcqStats('all', 'tf')
+              : bqTypeStats(t.bqType, 'all');
         if (s.total === 0) return;
-        var pct = t.mode === 'mcq' ? Math.round(s.answered / Math.max(s.total, 1) * 100) : Math.round(s.memorized / Math.max(s.total, 1) * 100);
+        var pct = (t.mode === 'mcq' || t.mode === 'tf') ? Math.round(s.answered / Math.max(s.total, 1) * 100) : Math.round(s.memorized / Math.max(s.total, 1) * 100);
         html += '<div class="dash-card" style="cursor:default;margin-bottom:8px">';
         html += '<div class="dash-card-hd"><span>' + t.icon + ' ' + t.label + '</span></div>';
-        html += '<div class="dash-card-stats">' + (t.mode === 'mcq' ? '已答 ' + s.answered + '/' + s.total : '已记住 ' + s.memorized + '/' + s.total) + '</div>';
+        html += '<div class="dash-card-stats">' + ((t.mode === 'mcq' || t.mode === 'tf') ? '已答 ' + s.answered + '/' + s.total : '已记住 ' + s.memorized + '/' + s.total) + '</div>';
         html += '<div class="dash-bar"><div class="dash-fill" style="width:' + pct + '%"></div></div>';
         html += '</div>';
       });
@@ -771,9 +816,12 @@
       if (S.answers[q.id]) { allAnswered++; if (S.results[q.id]) allCorrect++; }
     });
 
+    var typeIcon = S.mode === 'tf' ? '⚖️' : '✏️';
+    var typeTitle = S.mode === 'tf' ? '判断题' : '选择题';
+
     var html = '<div class="dash">';
-    html += '<div class="dash-hero" style="background:linear-gradient(135deg,var(--p),var(--p2))">';
-    html += '<div class="dash-hero-icon">✏️</div><h2>选择题</h2>';
+    html += '<div class="dash-hero" style="background:linear-gradient(135deg,var(--p),var(--bl))">';
+    html += '<div class="dash-hero-icon">' + typeIcon + '</div><h2>' + typeTitle + '</h2>';
     html += '<p>共 ' + allTotal + ' 题 · 已答 ' + allAnswered + '/' + allTotal + '</p>';
     html += '<div class="dash-hero-stats">';
     html += '<div class="dash-hero-s"><strong>' + allTotal + '</strong><span>总题</span></div>';
@@ -806,7 +854,7 @@
       html += '</div>';
       html += '<div class="wrong-ch-bar-wrap"><div class="wrong-ch-bar">';
       html += '<div class="wrong-ch-bar-fill correct" style="width:' + pct + '%"></div>';
-      html += '<div class="wrong-ch-bar-fill" style="width:' + (100 - pct) + '%;background:var(--bg2)"></div>';
+      html += '<div class="wrong-ch-bar-fill" style="width:' + (100 - pct) + '%;background:var(--bd)"></div>';
       html += '</div></div>';
       html += '<div class="wrong-ch-ft"><span>已答 ' + answered + '/' + total + '</span>';
       if (correct > 0) html += '<span style="color:var(--gr)">正确 ' + correct + '</span>';
@@ -841,7 +889,7 @@
 
     var html = '<div class="dash">';
     // Hero
-    html += '<div class="dash-hero" style="background:linear-gradient(135deg,var(--p),var(--p2))">';
+    html += '<div class="dash-hero" style="background:linear-gradient(135deg,var(--p),var(--bl))">';
     html += '<div class="dash-hero-icon">' + modeIcon + '</div><h2>' + modeLabel + '</h2>';
     html += '<p>共 ' + allTotal + ' 题 · 已记住 ' + allMem + '/' + allTotal + '</p>';
     html += '</div>';
@@ -877,7 +925,7 @@
       // 进度条
       html += '<div class="wrong-ch-bar-wrap"><div class="wrong-ch-bar">';
       html += '<div class="wrong-ch-bar-fill correct" style="width:' + pct + '%"></div>';
-      html += '<div class="wrong-ch-bar-fill" style="width:' + (100 - pct) + '%;background:var(--bg2)"></div>';
+      html += '<div class="wrong-ch-bar-fill" style="width:' + (100 - pct) + '%;background:var(--bd)"></div>';
       html += '</div></div>';
       html += '<div class="wrong-ch-ft"><span>已记住 ' + memorized + '/' + total + '</span></div>';
       html += '</div>';
@@ -951,10 +999,14 @@
   function renderBookmarkOverview() {
     var ids = Array.from(S.bookmarks);
     if (!ids.length) return '<div class="empty"><p>暂无收藏 ⭐</p><button class="btn btn-p" onclick="App.home()" style="margin-top:12px">返回首页</button></div>';
-    var byType = { mcq: [], fill: [], essay: [], calc: [] };
+    var byType = { mcq: [], tf: [], fill: [], essay: [], calc: [] };
     ids.forEach(function (id) {
       var q = (QUESTIONS || []).find(function (x) { return x.id === id; });
-      if (q) { byType.mcq.push(q); return; }
+      if (q) {
+        if (q._origType === '判断') byType.tf.push(q);
+        else byType.mcq.push(q);
+        return;
+      }
       q = (BIG_QUESTIONS || []).find(function (x) { return x.id === id; });
       if (q) {
         if (q.type === '填空') byType.fill.push(q);
@@ -1076,7 +1128,7 @@
       html += '<label>抽取数量</label><select id="randomCount">';
       [10, 20, 30, 50].forEach(function (v) { html += '<option value="' + v + '">' + v + '</option>'; });
       html += '</select><label>题型</label><select id="randomType">';
-      html += '<option value="all">全部</option><option value="single">单选</option><option value="multiple">多选</option>';
+      html += '<option value="all">全部</option><option value="single">单选</option><option value="multiple">多选</option><option value="判断">判断</option>';
       html += '</select></div></div>';
       html += '<div class="modal-ft"><button class="btn btn-o" onclick="App.closeRandomDlg()">取消</button><button class="btn btn-p" onclick="App.startRandom()">开始</button></div></div></div>';
     }
@@ -1205,11 +1257,17 @@
   // ════════════════════════════════════════════════════════════
 
   function render() {
-    document.getElementById('sidebarTotal').textContent = getAll().length + ' 选择 + ' + getBQ().length + ' 大题';
+    var tfCount = mcqFiltered('tf').length;
+    var mcqCount = mcqFiltered('mcq').length;
+    document.getElementById('sidebarTotal').textContent = mcqCount + ' 选择 + ' + tfCount + ' 判断 + ' + getBQ().length + ' 大题';
 
+    // 过滤：仅显示有题目的题型按钮
+    var availTypes = TYPES.filter(function (t) { return typeHasQuestions(t.mode); });
     TYPES.forEach(function (t) {
       var btn = document.getElementById('typeBtn_' + t.mode);
       if (btn) {
+        // 无题目的题型隐藏
+        btn.style.display = typeHasQuestions(t.mode) ? '' : 'none';
         btn.classList.toggle('active', S.mode === t.mode);
         var badge = btn.querySelector('.type-badge');
         if (badge) badge.textContent = typeSummary(t.mode);
@@ -1218,7 +1276,7 @@
 
     // 侧边栏目录标签 & 色调
     var ctxLabels = {
-      mcq: '✏️ 选择题目录', fill: '📝 填空题目录', essay: '📄 简答题目录',
+      mcq: '✏️ 选择题目录', tf: '⚖️ 判断题目录', fill: '📝 填空题目录', essay: '📄 简答题目录',
       calc: '🔢 计算题目录', wrong: '❌ 错题本目录'
     };
     var contextEl = document.getElementById('contextLabel');
@@ -1235,6 +1293,7 @@
     var navEl = document.getElementById('sidebarNav');
     navEl.className = 'sidebar-nav';
     if (S.mode === 'mcq' || S.mode === 'random') navEl.classList.add('mcq-mode');
+    else if (S.mode === 'tf') navEl.classList.add('mcq-mode');  // 判断题复用选择题目录色调
     else if (S.mode === 'fill') navEl.classList.add('fill-mode');
     else if (S.mode === 'essay') navEl.classList.add('essay-mode');
     else if (S.mode === 'calc') navEl.classList.add('calc-mode');
@@ -1265,7 +1324,7 @@
       btn.classList.toggle('active', btn.getAttribute('data-mode') === S.mode);
     });
 
-    var st = isTypeMode(S.mode) ? currentStats() : mcqStats('all');
+    var st = isTypeMode(S.mode) ? currentStats() : mcqStats('all', 'mcq');
     if (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc') {
       document.getElementById('sidebarStats').innerHTML =
         '<div class="stat"><span>已查看</span><span>' + st.viewed + '/' + st.total + '</span></div>' +
@@ -1275,6 +1334,10 @@
       document.getElementById('sidebarStats').innerHTML =
         '<div class="stat"><span>' + (S.mode === 'wrong' ? '错题总数' : '收藏总数') + '</span><span>' + totalStr + '</span></div>' +
         '<div class="stat"><span>当前章节</span><span>' + (S.chapter === 'all' ? '全部' : (getQs().length + ' 题')) + '</span></div>';
+    } else if (S.mode === 'mcq' || S.mode === 'tf') {
+      document.getElementById('sidebarStats').innerHTML =
+        '<div class="stat"><span>进度</span><span>' + st.answered + '/' + st.total + '</span></div>' +
+        '<div class="stat"><span>错题</span><span>' + S.wrongSet.size + '</span></div>';
     } else {
       document.getElementById('sidebarStats').innerHTML =
         '<div class="stat"><span>进度</span><span>' + st.answered + '/' + st.total + '</span></div>' +
@@ -1302,13 +1365,13 @@
       content = (S.chapter === 'all' && !S._bmQs) ? renderBQChapterGrid() : renderBQListView();
     } else if (S.mode === 'bookmark') content = S.chapter === 'all' ? renderBookmarkOverview() : renderQuestionView();
     else if (S.mode === 'wrong') content = S.chapter === 'all' ? renderWrongOverview() : renderQuestionView();
-    else if (S.mode === 'mcq') content = (S.chapter === 'all' && !S._bmQs) ? renderMCQChapterGrid() : renderQuestionView();
+    else if (S.mode === 'mcq' || S.mode === 'tf') content = (S.chapter === 'all' && !S._bmQs) ? renderMCQChapterGrid() : renderQuestionView();
     else if (S.mode === 'random') content = renderQuestionView();
     else content = '<div class="empty"><p>选择题型开始学习</p></div>';
     document.getElementById('contentArea').innerHTML = content;
 
     document.getElementById('contentFooter').innerHTML =
-      (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc' || (S.mode === 'mcq' && S.chapter === 'all' && !S._bmQs))
+      (S.mode === 'fill' || S.mode === 'essay' || S.mode === 'calc' || ((S.mode === 'mcq' || S.mode === 'tf') && S.chapter === 'all' && !S._bmQs))
         ? '<span>共 ' + Math.max(total(), 1) + ' 题</span><span>' + modeName + '</span>'
         : '<span>第 ' + (S.idx + 1) + '/' + Math.max(total(), 1) + ' 题</span><span>' + modeName + '</span>';
 
@@ -1602,7 +1665,9 @@
     var type = _typeMap[typeMode];
     var qs;
     if (typeMode === 'mcq') {
-      qs = getAll().filter(function (q) { return S.bookmarks.has(q.id) && q.chapter === ch; });
+      qs = getAll().filter(function (q) { return S.bookmarks.has(q.id) && q.chapter === ch && q._origType !== '判断'; });
+    } else if (typeMode === 'tf') {
+      qs = getAll().filter(function (q) { return S.bookmarks.has(q.id) && q.chapter === ch && q._origType === '判断'; });
     } else {
       qs = getBQByType(type).filter(function (q) { return S.bookmarks.has(q.id) && q.chapter === ch; });
     }
@@ -1611,7 +1676,7 @@
     S._bmQs = qs;
     S.mode = typeMode;
     S.chapter = ch;
-    if (typeMode !== 'mcq') {
+    if (typeMode !== 'mcq' && typeMode !== 'tf') {
       // 收藏模式下默认所有题目答案展开
       qs.forEach(function (q) { _bqRevealedMap[q.id] = true; });
     }
@@ -1623,7 +1688,10 @@
     var countEl = document.getElementById('randomCount'), typeEl = document.getElementById('randomType');
     if (countEl) S.randomCount = parseInt(countEl.value, 10);
     if (typeEl) S.randomType = typeEl.value;
-    var pool = S.randomType === 'all' ? getAll().slice() : getAll().filter(function (q) { return q.type === S.randomType; });
+    var pool;
+    if (S.randomType === 'all') { pool = getAll().slice(); }
+    else if (S.randomType === '判断') { pool = getAll().filter(function (q) { return q._origType === '判断'; }); }
+    else { pool = getAll().filter(function (q) { return q.type === S.randomType; }); }
     shuffle(pool);
     S._randomQs = pool.slice(0, Math.min(S.randomCount, pool.length));
     _rdAns = {}; _rdRes = {};
@@ -1775,6 +1843,21 @@
   // ════════════════════════════════════════════════════════════
 
   document.addEventListener('DOMContentLoaded', function () {
+    // 版本迁移：系统架构变更时自动清理脏数据
+    (function migrateData() {
+      var APP_VERSION = '2.0';  // 判断题独立为单独题型
+      var storedVer = LS.getItem('net_version');
+      if (storedVer !== APP_VERSION) {
+        // 清除自测历史（旧架构与新版不兼容）
+        LS.removeItem(K.hist);
+        LS.removeItem(K.atest);
+        _history = [];
+        _activeTest = null;
+        if (_testTimerId) { clearInterval(_testTimerId); _testTimerId = null; }
+        LS.setItem('net_version', APP_VERSION);
+      }
+    })();
+
     // 启动时同步错题本：清理孤立 ID，并从已有答题结果中重建错题
     (function syncWrongSet() {
       var allIds = {};

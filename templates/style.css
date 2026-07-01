@@ -89,6 +89,16 @@ button{cursor:pointer;font-family:inherit}
 .resume-banner{background:var(--ywb);border:1px solid var(--yw);border-radius:var(--r);padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .resume-banner span{font-size:.85rem;color:var(--t)}
 .resume-banner button{padding:6px 16px;background:var(--yw);color:#fff;border:none;border-radius:var(--r);font-weight:600}
+.wrong-banner{background:var(--rdb);border:1px solid var(--rd);border-radius:var(--r);padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.wrong-banner span{font-size:.85rem;color:var(--t)}
+.sec-title{font-size:.95rem;font-weight:700;color:var(--t);margin:24px 0 12px;padding-bottom:8px;border-bottom:2px solid var(--bd)}
+.dash-card-hd{display:flex;align-items:center;gap:8px;font-size:.85rem;font-weight:600;color:var(--t);margin-bottom:6px}
+.dash-card-stats{font-size:.78rem;color:var(--t2);margin-bottom:4px}
+.dash-bar{height:6px;background:var(--bd);border-radius:3px;overflow:hidden;margin-top:4px}
+.dash-fill{height:100%;background:var(--gr);border-radius:3px;transition:width .4s ease}
+.dash-num{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--p);color:#fff;font-size:.7rem;font-weight:700;margin-right:4px}
+.mode-card{border:2px solid transparent}
+.mode-card:hover{border-color:var(--p)}
 
 /* ═══════════════════════════════════════════════════════════ */
 /*  MCQ Question View                                            */
@@ -99,8 +109,15 @@ button{cursor:pointer;font-family:inherit}
 .tag-i{background:var(--pb);color:var(--p)}
 .tag-d{background:var(--rdb);color:var(--rd)}
 .tag-w{background:var(--ywb);color:var(--yw)}
+.tag-p{background:var(--pb);color:var(--p)}
+.tag-g{background:var(--grb);color:var(--gr)}
+.tag-m{background:var(--sh);color:var(--t2)}
+.q-num{font-size:.78rem;color:var(--t3);margin-left:auto}
 .q-title{font-size:1.05rem;font-weight:600;color:var(--t);line-height:1.5;margin-bottom:16px}
+.q-txt{font-size:1.05rem;font-weight:600;color:var(--t);line-height:1.6;margin-bottom:16px}
 .q-image{max-width:100%;border-radius:var(--r);margin-bottom:16px;border:1px solid var(--bd)}
+.q-img-wrap{text-align:center;margin-bottom:16px}
+.q-img{max-width:100%;border-radius:var(--r);border:1px solid var(--bd)}
 .options{display:flex;flex-direction:column;gap:10px}
 .opt{display:flex;align-items:center;gap:12px;padding:14px 18px;border:2px solid var(--bd);border-radius:var(--r);cursor:pointer;transition:all var(--tr);font-size:.92rem}
 .opt:hover{border-color:var(--p);background:var(--pb)}
@@ -108,11 +125,13 @@ button{cursor:pointer;font-family:inherit}
 .opt.cor{border-color:var(--gr);background:var(--grb)}
 .opt.wrg{border-color:var(--rd);background:var(--rdb)}
 .opt.done{pointer-events:none}
-.opt-lbl{font-weight:700;color:var(--p);min-width:28px;text-align:center;font-size:1rem}
-.opt-txt{flex:1;color:var(--t)}
+.opt-l{font-weight:700;color:var(--p);min-width:28px;text-align:center;font-size:1rem}
+.opt-t{flex:1;color:var(--t)}
+.opt-ic{font-weight:700;font-size:.9rem;min-width:20px;text-align:center}
 .fb{padding:14px 18px;border-radius:var(--r);margin-top:14px;font-size:.88rem;font-weight:500;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .fb-cor{background:var(--grb);color:var(--gr);border:1px solid var(--gr)}
 .fb-wrg{background:var(--rdb);color:var(--rd);border:1px solid var(--rd)}
+.fb-ans{font-size:.85rem;margin-left:auto}
 .bm-btn{background:none;border:none;font-size:1.1rem;cursor:pointer;padding:2px 6px;border-radius:4px;transition:all var(--tr)}
 .bm-btn:hover{background:var(--bg)}
 .bm-btn.bookmarked{color:var(--yw)}
@@ -126,6 +145,8 @@ button{cursor:pointer;font-family:inherit}
 .q-nav .nav-arrow{font-size:1.1rem;padding:8px 12px}
 .q-nav .nav-home{background:var(--p);color:#fff;border-color:var(--p)}
 .q-nav .nav-sheet{background:var(--bl);color:#fff;border-color:var(--bl)}
+.nav-btn{padding:8px 16px;border:1px solid var(--bd);border-radius:var(--r);background:var(--cd);color:var(--t);font-size:.82rem;cursor:pointer;transition:all var(--tr)}
+.nav-btn:hover{background:var(--bg);border-color:var(--p)}
 
 /* ═══════════════════════════════════════════════════════════ */
 /*  Answer Sheet                                                 */
@@ -180,6 +201,9 @@ button{cursor:pointer;font-family:inherit}
 .bq-list-a{margin-top:10px;padding:14px 16px;background:var(--grb);border-radius:var(--r);border:1px solid var(--gr)}
 .bq-list-a-content{font-size:.9rem;color:var(--t);white-space:pre-wrap;line-height:1.6}
 .bq-list-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:10px}
+.bq-list-mem{font-size:.75rem;color:var(--gr);font-weight:600;margin-left:auto}
+.bq-list-a-label{font-size:.78rem;font-weight:600;color:var(--gr);margin-bottom:6px}
+.bq-filter{cursor:pointer;user-select:none}
 
 /* ═══════════════════════════════════════════════════════════ */
 /*  Modals & Toast                                               */
@@ -188,8 +212,15 @@ button{cursor:pointer;font-family:inherit}
 .modal-dlg{background:var(--cd);border-radius:var(--rl);box-shadow:var(--shd2);max-width:440px;width:100%;max-height:85vh;overflow-y:auto;animation:fadeIn .25s ease}
 .modal-hd{padding:16px 20px;border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between}
 .modal-hd h3{font-size:1rem;color:var(--t)}
+.modal-x{font-size:1.2rem;cursor:pointer;color:var(--t2);padding:4px 8px;border:none;background:none}
+.modal-x:hover{color:var(--rd)}
 .modal-bd{padding:20px}
 .modal-ft{padding:12px 20px;border-top:1px solid var(--bd);display:flex;gap:8px;justify-content:flex-end}
+.dlg-form{display:flex;flex-direction:column;gap:8px}
+.dlg-form label{font-size:.82rem;font-weight:600;color:var(--t2);margin-top:4px}
+.dlg-form select{padding:10px 12px;border:2px solid var(--bd);border-radius:var(--r);font-size:.88rem;font-family:inherit;color:var(--t);background:var(--bg)}
+.dlg-form select:focus{border-color:var(--p);outline:none}
+.dlg-hint{font-size:.75rem;color:var(--t3);margin-top:4px}
 .toast-container{position:fixed;top:20px;right:20px;z-index:var(--z-lg);display:flex;flex-direction:column;gap:8px}
 .toast{padding:12px 20px;border-radius:var(--r);font-size:.85rem;font-weight:500;box-shadow:var(--shd2);animation:fadeIn .3s ease;max-width:360px}
 .toast-info{background:var(--p);color:#fff}
@@ -206,6 +237,7 @@ button{cursor:pointer;font-family:inherit}
 .btn-o{background:transparent;color:var(--t2);border:1px solid var(--bd)}
 .btn-o:hover{background:var(--bg)}
 .btn-sm{padding:6px 14px;font-size:.78rem}
+.btn-s{background:var(--gr);color:#fff;padding:6px 14px;font-size:.78rem}
 .btn-d{background:transparent;color:var(--rd);border:1px solid var(--rd)}
 .btn-d:hover{background:var(--rdb)}
 
@@ -228,6 +260,8 @@ button{cursor:pointer;font-family:inherit}
 .wrong-ch-bar-fill.correct{background:var(--gr)}
 .wrong-ch-bar-fill.wrong{background:var(--rd)}
 .wrong-ch-ft{display:flex;justify-content:space-between;font-size:.7rem;color:var(--t3);margin-top:auto;padding-top:4px}
+.wrong-ch-icon{font-size:1.2rem}
+.wrong-ch-name{font-size:.9rem;font-weight:600;color:var(--t);flex:1}
 
 /* ═══════════════════════════════════════════════════════════ */
 /*  Test History                                                 */
@@ -235,6 +269,15 @@ button{cursor:pointer;font-family:inherit}
 .test-rst .modal-dlg{max-width:380px}
 .test-rst .modal-ft{justify-content:center;gap:12px}
 .hist-item:hover{box-shadow:var(--shd);border-color:var(--p)!important}
+
+/* Sidebar stat rows */
+.sidebar-stats .stat{display:flex;justify-content:space-between;padding:2px 0;font-size:.76rem}
+.sidebar-stats .stat span:first-child{color:var(--st);opacity:.7}
+.sidebar-stats .stat span:last-child{font-weight:600;color:var(--st)}
+
+/* Form selects */
+select{padding:8px 12px;border:2px solid var(--bd);border-radius:var(--r);font-size:.88rem;font-family:inherit;color:var(--t);background:var(--bg)}
+select:focus{border-color:var(--p);outline:none}
 
 /* ═══════════════════════════════════════════════════════════ */
 /*  Empty State                                                  */
