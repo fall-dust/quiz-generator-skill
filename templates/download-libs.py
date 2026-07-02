@@ -1,36 +1,23 @@
 #!/usr/bin/env python3
 """
-第三方 JS 库下载脚本 — 将所需库下载到本地 js/lib/ 目录
+第三方 JS/CSS 库下载脚本 — 将富文本渲染所需库下载到本地 js/lib/ 目录
 确保离线可用。若本地已有则跳过，不会重复下载。
 用法: python js/lib/download-libs.py
 """
 import os, sys, urllib.request
 
-# ─── 在此处声明需要的第三方库 ─────────────────────────────
+# ─── 富文本编辑器 + Markdown 渲染所需库 ──────────────────────
 LIBS = {
-    # 库名: (CDN URL, 保存文件名)
-    # 取消注释你需要的库：
-    #
-    # "chart.js": (
-    #     "https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js",
-    #     "chart.umd.min.js",
-    # ),
-    # "katex": (
-    #     "https://cdn.jsdelivr.net/npm/katex@0/dist/katex.mjs",
-    #     "katex.mjs",
-    # ),
-    # "marked": (
-    #     "https://cdn.jsdelivr.net/npm/marked@15/marked.min.js",
-    #     "marked.min.js",
-    # ),
-    # "lodash-es": (
-    #     "https://cdn.jsdelivr.net/npm/lodash-es@4/lodash.min.js",
-    #     "lodash.min.js",
-    # ),
-    # "echarts": (
-    #     "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js",
-    #     "echarts.min.js",
-    # ),
+    "Quill JS":   ("https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.min.js",                       "quill.min.js"),
+    "Quill CSS":  ("https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.snow.css",                     "quill.snow.css"),
+    "KaTeX JS":   ("https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js",                     "katex.min.js"),
+    "KaTeX CSS":  ("https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css",                    "katex.min.css"),
+    "KaTeX AR":   ("https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js",       "katex-auto-render.min.js"),
+    "Marked":     ("https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js",                        "marked.min.js"),
+    "DOMPurify":  ("https://cdn.jsdelivr.net/npm/dompurify@3.2.5/dist/purify.min.js",                  "purify.min.js"),
+    "hl.js JS":   ("https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/lib/highlight.min.js",           "highlight.min.js"),
+    "hl.js CSS":  ("https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/styles/github.min.css",          "github.min.css"),
+    "hl.js Dark": ("https://cdn.jsdelivr.net/npm/highlight.js@11.11.1/styles/github-dark.min.css",     "github-dark.min.css"),
 }
 
 
@@ -45,10 +32,6 @@ def sizeof_fmt(size):
 def download():
     dst = os.path.join(os.path.dirname(os.path.abspath(__file__)))
     os.makedirs(dst, exist_ok=True)
-
-    if not LIBS:
-        print("⚠  LIBS 字典为空。请先在 download-libs.py 中取消注释你需要的库。")
-        sys.exit(1)
 
     ok = fail = skip = 0
     for name, (url, fname) in LIBS.items():

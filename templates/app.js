@@ -263,6 +263,101 @@
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 
+  // ═══════════════════════════════════════════════════════════
+  //  富文本渲染引擎（Markdown → HTML + KaTeX + 代码高亮）
+  //  从第一性原理设计：预处理公式 → Marked 解析 → 后处理还原
+  // ═══════════════════════════════════════════════════════════
+  var _markedInstance = null;
+  function getMarkedInstance() {
+    if (_markedInstance) return _markedInstance;
+    if (typeof marked !== 'undefined') {
+      try { marked.setOptions({ gfm: true, breaks: false }); } catch(e) {}
+      _markedInstance = marked;
+      return marked;
+    }
+    return null;
+  }
+
+  function renderMarkdown(text) {
+    if (!text) return '';
+
+    // 步骤0：支持传入 HTML 片段（Quill 编辑产物、override 中的 HTML）
+    var raw = String(text);
+    if (/<(p|h[1-6]|ul|ol|li|strong|em|blockquote|pre|code|table|a|br|hr|img|u|s|sub|sup|span)[^>]*>/i.test(raw)) {
+      if (typeof DOMPurify !== 'undefined') {
+        try { return DOMPurify.sanitize(raw, { ADD_ATTR: ['target', 'class', 'style'] }); } catch(e) {}
+      }
+      return raw;
+    }
+
+    // 步骤1：保护数学公式 → 占位符
+    var mathBlocks = [];
+    raw = raw.replace(/\$\$([\s\S]*?)\$\$/g, function(_, f) {
+      mathBlocks.push({ display: true, formula: f.trim() });
+      return '%%MATH_' + (mathBlocks.length - 1) + '%%';
+    });
+    raw = raw.replace(/\$(.*?)\$/g, function(_, f) {
+      mathBlocks.push({ display: false, formula: f.trim() });
+      return '%%MATH_' + (mathBlocks.length - 1) + '%%';
+    });
+
+    // 步骤2：Markdown → HTML
+    var html;
+    var m = getMarkedInstance();
+    if (m && typeof m.parse === 'function') {
+      try { html = m.parse(raw); } catch(e) { html = _fallbackRender(raw); }
+    } else {
+      html = _fallbackRender(raw);
+    }
+
+    // 步骤3：还原数学公式 → KaTeX
+    html = html.replace(/%%MATH_(\d+)%%/g, function(_, idx) {
+      var entry = mathBlocks[parseInt(idx, 10)];
+      if (!entry) return '';
+      if (typeof katex !== 'undefined') {
+        try {
+          return katex.renderToString(entry.formula, {
+            displayMode: entry.display,
+            throwOnError: false,
+            trust: true
+          });
+        } catch(e) { return '<code>' + escapeHtml(entry.formula) + '</code>'; }
+      }
+      return entry.display ? '<pre><code>' + escapeHtml(entry.formula) + '</code></pre>' : '<code>' + escapeHtml(entry.formula) + '</code>';
+    });
+
+    // 步骤4：代码高亮
+    if (typeof hljs !== 'undefined') {
+      try {
+        var tmp = document.createElement('div');
+        tmp.innerHTML = html;
+        tmp.querySelectorAll('pre code').forEach(function(b) { try { hljs.highlightElement(b); } catch(e) {} });
+        html = tmp.innerHTML;
+      } catch(e) {}
+    }
+
+    // 步骤5：DOMPurify 安全过滤
+    if (typeof DOMPurify !== 'undefined') {
+      try { html = DOMPurify.sanitize(html, { ADD_ATTR: ['target', 'class', 'aria-hidden', 'style'] }); } catch(e) {}
+    }
+
+    return html;
+  }
+
+  function _fallbackRender(raw) {
+    return '<p>' + escapeHtml(raw).replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>') + '</p>';
+  }
+
+  // 渲染富文本块（外加 .rich-content 容器）
+  function richText(text) {
+    if (!text) return '';
+    return '<div class="rich-content">' + renderMarkdown(text) + '</div>';
+  }
+
+  // 暴露到全局，供 editor.js 使用
+  window.richText = richText;
+  window.renderMarkdown = renderMarkdown;
+
   function save() {
     LS.setItem(K.ans, JSON.stringify(S.answers));
     LS.setItem(K.res, JSON.stringify(S.results));
@@ -744,7 +839,7 @@
     html += isBookmarked(q) ? '⭐' : '☆';
     html += '</button></div>';
 
-    html += '<div class="q-txt">' + escapeHtml(q.question) + '</div>';
+    html += '<div class="q-txt">' + richText(q.question) + '</div>';
     if (q.image) {
       html += '<div class="q-img-wrap"><img class="q-img" src="' + escapeHtml(q.image) + '" alt="题目附图" loading="lazy" onerror="this.style.display=&quot;none&quot;"></div>';
     }
@@ -970,8 +1065,8 @@
       html += '</button>';
       if (mem) html += '<span class="bq-list-mem">✅ 已记住</span>';
       html += '</div>';
-      // 题目正文
-      html += '<div class="bq-list-q">' + escapeHtml(q.question) + '</div>';
+      // 题目正文（富文本）
+      html += '<div class="bq-list-q">' + richText(q.question) + '</div>';
       if (q.image) {
         html += '<div class="q-img-wrap"><img class="q-img" src="' + escapeHtml(q.image) + '" alt="题目附图" loading="lazy" onerror="this.style.display=&quot;none&quot;"></div>';
       }
@@ -980,7 +1075,7 @@
         html += '<div style="text-align:center;margin-top:16px"><button class="btn btn-p" onclick="App.revealBQ(\'' + q.id + '\')">显示答案</button></div>';
       } else {
         html += '<div class="bq-list-a"><div class="bq-list-a-label">✅ 参考答案</div>';
-        html += '<div class="bq-list-a-content">' + escapeHtml(getBQAnswerText(q)) + '</div></div>';
+        html += '<div class="bq-list-a-content">' + richText(getBQAnswerText(q)) + '</div></div>';
       }
       // 底部操作
       html += '<div class="bq-list-actions">';
@@ -1783,6 +1878,13 @@
     h.setAttribute('data-theme', next);
     LS.setItem(K.theme, next);
     document.getElementById('themeBtn').textContent = next === 'dark' ? '☀️' : '🌙';
+    // 同步切换 highlight.js 主题
+    var hljsLight = document.getElementById('hljs-light');
+    var hljsDark = document.getElementById('hljs-dark');
+    if (hljsLight && hljsDark) {
+      if (next === 'dark') { hljsLight.disabled = true; hljsDark.disabled = false; }
+      else { hljsLight.disabled = false; hljsDark.disabled = true; }
+    }
   };
 
   App.clearData = function () {
@@ -1882,6 +1984,12 @@
 
     var initTheme = LS.getItem(K.theme);
     if (initTheme) { document.documentElement.setAttribute('data-theme', initTheme); document.getElementById('themeBtn').textContent = initTheme === 'dark' ? '☀️' : '🌙'; }
+    // 同步 highlight.js 初始主题
+    if (initTheme === 'dark') {
+      var hljsLight = document.getElementById('hljs-light');
+      var hljsDark = document.getElementById('hljs-dark');
+      if (hljsLight && hljsDark) { hljsLight.disabled = true; hljsDark.disabled = false; }
+    }
 
     document.getElementById('hamburger').addEventListener('click', function () { document.getElementById('sidebar').classList.toggle('open'); });
     document.getElementById('closeSheet').addEventListener('click', function () { S.showSheet = false; render(); });
