@@ -201,6 +201,31 @@
     quill.setSelection(index + 1, 0);
   }
 
+  // ── 本地图片上传 (隐藏 file input 单例) ──
+  var _imageFileInput = null;
+  function getImageFileInput() {
+    if (_imageFileInput) return _imageFileInput;
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.style.display = 'none';
+    input.addEventListener('change', function () {
+      var file = input.files[0];
+      if (!file) return;
+      var quill = _activeQuills.question || _activeQuills.answer;
+      if (!quill) return;
+      var reader = new FileReader();
+      reader.onload = function (e) {
+        _insertImage(quill, e.target.result);
+      };
+      reader.readAsDataURL(file);
+      input.value = ''; // 重置，允许重复选择同一文件
+    });
+    document.body.appendChild(input);
+    _imageFileInput = input;
+    return input;
+  }
+
   // ═══════════════════════════════════════════════════════════
   //  图片拖拽缩放 — CSS resize 在 contenteditable 内无效，用 JS 实现四角缩放
   // ═══════════════════════════════════════════════════════════
@@ -318,13 +343,8 @@
       container: getQuillToolbar(),
       handlers: {
         image: function () {
-          var url = prompt('请输入图片 URL（也可以直接粘贴图片到编辑器）：', 'https://');
-          if (!url) return;
-          var q = this.quill ? this.quill : (_activeQuills.question || _activeQuills.answer);
-          if (!q) return;
-          var range = q.getSelection(true);
-          q.insertEmbed(range ? range.index : q.getLength() - 1, 'image', url, 'user');
-          q.setSelection((range ? range.index : q.getLength() - 1) + 1, 0);
+          // 点击图片按钮 → 打开本地文件选择器（Ctrl+V 粘贴仍可用于剪贴板图片）
+          getImageFileInput().click();
         }
       }
     };
