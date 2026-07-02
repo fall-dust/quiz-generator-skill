@@ -343,8 +343,18 @@
       container: getQuillToolbar(),
       handlers: {
         image: function () {
-          // 点击图片按钮 → 打开本地文件选择器（Ctrl+V 粘贴仍可用于剪贴板图片）
-          getImageFileInput().click();
+          var q = this.quill ? this.quill : (_activeQuills.question || _activeQuills.answer);
+          if (!q) return;
+          // 双模式：「确定」→ 本地文件，「取消」→ 输入链接
+          if (confirm('📷 插入图片\n\n点击「确定」从本地选择文件\n点击「取消」输入图片链接')) {
+            getImageFileInput().click();
+          } else {
+            var url = prompt('请输入图片链接（支持 http/https/data:）：', 'https://');
+            if (!url) return;
+            var range = q.getSelection(true);
+            q.insertEmbed(range ? range.index : q.getLength() - 1, 'image', url, 'user');
+            q.setSelection((range ? range.index : q.getLength() - 1) + 1, 0);
+          }
         }
       }
     };
